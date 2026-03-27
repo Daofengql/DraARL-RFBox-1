@@ -3,11 +3,12 @@
 
 #include <Arduino.h>
 #include <functional>
+#include <ESP32RotaryEncoder.h>
 
 // 编码器方向
 enum class EC11Direction {
     NONE = 0,
-    CLOCKWISE,      // 顺时针
+    CLOCKWISE,         // 顺时针
     COUNTER_CLOCKWISE  // 逆时针
 };
 
@@ -21,7 +22,7 @@ enum class EC11Event {
     BUTTON_CLICK    // 按键单击
 };
 
-// 回调函数类型
+// 回调函���类型
 using EC11Callback = std::function<void(EC11Event event, int32_t value)>;
 
 /**

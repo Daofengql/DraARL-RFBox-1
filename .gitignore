@@ -16,6 +16,9 @@
 lvglProj/backup/
 lvglProj/cache/
 
+# Libraries (managed by lib_deps)
+lib/LovyanGFX-master/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -5,23 +5,75 @@
 
 #include "ui.h"
 
-lv_obj_t * ui_startUP = NULL;
+lv_obj_t * ui_StartUP = NULL;
+lv_obj_t * ui_startinfo = NULL;
+lv_obj_t * ui_header1 = NULL;
+lv_obj_t * ui_logo1 = NULL;
+lv_obj_t * ui_time1 = NULL;
+lv_obj_t * ui_processstat = NULL;
 // event funtions
 
 // build funtions
 
-void ui_startUP_screen_init(void)
+void ui_StartUP_screen_init(void)
 {
-    ui_startUP = lv_obj_create(NULL);
-    lv_obj_clear_flag(ui_startUP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    ui_StartUP = lv_obj_create(NULL);
+    lv_obj_clear_flag(ui_StartUP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_startinfo = lv_textarea_create(ui_StartUP);
+    lv_obj_set_width(ui_startinfo, 310);
+    lv_obj_set_height(ui_startinfo, 170);
+    lv_obj_set_align(ui_startinfo, LV_ALIGN_CENTER);
+    lv_textarea_set_placeholder_text(ui_startinfo, "Placeholder...");
+
+    ui_header1 = lv_obj_create(ui_StartUP);
+    lv_obj_remove_style_all(ui_header1);
+    lv_obj_set_width(ui_header1, 320);
+    lv_obj_set_height(ui_header1, 30);
+    lv_obj_set_x(ui_header1, 0);
+    lv_obj_set_y(ui_header1, -105);
+    lv_obj_set_align(ui_header1, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_header1, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_set_style_bg_color(ui_header1, lv_color_hex(0x22262D), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_header1, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_logo1 = lv_label_create(ui_header1);
+    lv_obj_set_width(ui_logo1, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_logo1, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_logo1, -110);
+    lv_obj_set_y(ui_logo1, 0);
+    lv_obj_set_align(ui_logo1, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_logo1, "DraARL-PTT");
+    lv_obj_set_style_text_color(ui_logo1, lv_color_hex(0x00DDFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_logo1, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_logo1, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_time1 = lv_label_create(ui_header1);
+    lv_obj_set_width(ui_time1, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_time1, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_align(ui_time1, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_time1, "12:00");
+    lv_obj_set_style_text_font(ui_time1, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_processstat = lv_bar_create(ui_StartUP);
+    lv_obj_set_width(ui_processstat, 310);
+    lv_obj_set_height(ui_processstat, 20);
+    lv_obj_set_x(ui_processstat, 0);
+    lv_obj_set_y(ui_processstat, 102);
+    lv_obj_set_align(ui_processstat, LV_ALIGN_CENTER);
 
 }
 
-void ui_startUP_screen_destroy(void)
+void ui_StartUP_screen_destroy(void)
 {
-    if(ui_startUP) lv_obj_del(ui_startUP);
+    if(ui_StartUP) lv_obj_del(ui_StartUP);
 
     // NULL screen variables
-    ui_startUP = NULL;
+    ui_StartUP = NULL;
+    ui_startinfo = NULL;
+    ui_header1 = NULL;
+    ui_logo1 = NULL;
+    ui_time1 = NULL;
+    ui_processstat = NULL;
 
 }

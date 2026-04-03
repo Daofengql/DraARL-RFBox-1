@@ -1,10 +1,20 @@
 #include "display.h"
 #include "config.h"
+#include "ec11_driver.h"
+#include <Arduino.h>
+
+// 编码器输入设备
+lv_indev_t *encoder_indev = nullptr;
+lv_group_t *encoder_group = nullptr;
+
+// 编码器状态
+static int32_t enc_diff = 0;
+static lv_indev_state_t enc_state = LV_INDEV_STATE_RELEASED;
 
 // 定义LGFX类，用于显示面板初始化
 class LGFX : public lgfx::LGFX_Device
 {
-  lgfx::Panel_ST7789 _panel_instance;  // 使用 ST7789 面板驱动 (兼容 GC9A01)
+  lgfx::Panel_ST7789 _panel_instance;  // 使用 ST7789 面板驱动
   lgfx::Bus_SPI _bus_instance;         // 使用SPI总线
 
 public:
@@ -32,11 +42,22 @@ public:
     panel_cfg.pin_rst = TFT_RST;       
     panel_cfg.pin_busy = -1;     
 
-    panel_cfg.memory_width  = SCREEN_WIDTH;  
-    panel_cfg.memory_height = SCREEN_HEIGHT; 
-    panel_cfg.panel_width   = SCREEN_WIDTH; 
-    panel_cfg.panel_height  = SCREEN_HEIGHT;
-    panel_cfg.offset_rotation = 0;           // 不旋转
+    if (SCREEN_WIDTH > SCREEN_HEIGHT) {
+          panel_cfg.memory_width  = SCREEN_HEIGHT; // 物理宽 = 逻辑高 (240)
+          panel_cfg.memory_height = SCREEN_WIDTH;  // 物理高 = 逻辑宽 (320)
+          panel_cfg.panel_width   = SCREEN_HEIGHT; 
+          panel_cfg.panel_height  = SCREEN_WIDTH;
+          panel_cfg.offset_rotation = 1;// 旋转 90度 变成横屏       
+            
+      } 
+      // 情况2：竖屏模式 (例如 240x320) 或 圆形屏幕 (240x240)
+      else {
+          panel_cfg.memory_width  = SCREEN_WIDTH;  
+          panel_cfg.memory_height = SCREEN_HEIGHT; 
+          panel_cfg.panel_width   = SCREEN_WIDTH; 
+          panel_cfg.panel_height  = SCREEN_HEIGHT;
+          panel_cfg.offset_rotation = 0;           // 不旋转
+      }
     
 
     panel_cfg.offset_x = 0;       
@@ -45,7 +66,7 @@ public:
     panel_cfg.dummy_read_pixel = 8; 
     panel_cfg.dummy_read_bits = 1;  
     panel_cfg.readable = false;
-    panel_cfg.invert = true;      // 如果颜色不对，尝试改为 true
+    panel_cfg.invert = false;      // 如果颜色不对，尝试改为 true
     panel_cfg.rgb_order = false;   
     panel_cfg.dlen_16bit = false;  
     panel_cfg.bus_shared = false;  
@@ -90,4 +111,50 @@ void flushDisplay(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_
                    (lgfx::swap565_t *)&color_p->full);
 
   lv_disp_flush_ready(disp);
+}
+
+// 编码器读取回调
+static void encoder_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+    data->enc_diff = enc_diff;
+    data->state = enc_state;
+    enc_diff = 0;  // 读取后清零
+}
+
+// EC11 事件回调
+static void ec11_event_handler(EC11Event event, int32_t value) {
+    switch (event) {
+        case EC11Event::ROTATE_CW:
+            enc_diff -= value;  // 顺时针增加
+            break;
+        case EC11Event::ROTATE_CCW:
+            enc_diff -= value;  // 逆时针减少
+            break;
+        case EC11Event::BUTTON_PRESS:
+            enc_state = LV_INDEV_STATE_PRESSED;
+            break;
+        case EC11Event::BUTTON_RELEASE:
+            enc_state = LV_INDEV_STATE_RELEASED;
+            break;
+        default:
+            break;
+    }
+}
+
+void initEncoderInput() {
+    // 初始化 EC11 编码器
+    ec11_init();
+    ec11_set_callback(ec11_event_handler);
+
+    // 创建输入组
+    encoder_group = lv_group_create();
+
+    // 注册编码器输入设备
+    static lv_indev_drv_t enc_drv;
+    lv_indev_drv_init(&enc_drv);
+    enc_drv.type = LV_INDEV_TYPE_ENCODER;
+    enc_drv.read_cb = encoder_read_cb;
+    encoder_indev = lv_indev_drv_register(&enc_drv);
+
+    // 将编码器关联到组
+    lv_indev_set_group(encoder_indev, encoder_group);
 }

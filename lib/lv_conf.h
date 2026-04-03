@@ -71,7 +71,7 @@
    MEMORY SETTINGS
  *=========================*/
 
-/* [优化] 开启自定义内存管理，使用 ESP32 的 PSRAM */
+/* Enable custom memory manager and use ESP32 PSRAM. */
 #define LV_MEM_CUSTOM 1
 
 #if LV_MEM_CUSTOM == 0
@@ -87,9 +87,9 @@
     #endif
 
 #else       /*LV_MEM_CUSTOM*/
-    /* [优化] 针对 ESP32-S3 PSRAM 的配置 */
-    #define LV_MEM_CUSTOM_INCLUDE <esp_heap_caps.h>   /* 引入 ESP32 内存头文件 */
-    /* 强制所有 LVGL 对象(按钮、图片等)分配在 PSRAM 中 */
+    /* PSRAM-related settings for ESP32-S3. */
+    #define LV_MEM_CUSTOM_INCLUDE <esp_heap_caps.h>   /* ESP32 memory API. */
+    /* Allocate LVGL objects in PSRAM. */
     #define LV_MEM_CUSTOM_ALLOC(size)   heap_caps_malloc(size, MALLOC_CAP_SPIRAM)
     #define LV_MEM_CUSTOM_FREE(ptr)     heap_caps_free(ptr)
     #define LV_MEM_CUSTOM_REALLOC(ptr, new_size) heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM)
@@ -399,7 +399,7 @@
 #define LV_FONT_MONTSERRAT_42 0
 #define LV_FONT_MONTSERRAT_44 0
 #define LV_FONT_MONTSERRAT_46 0
-#define LV_FONT_MONTSERRAT_48 0
+#define LV_FONT_MONTSERRAT_48 1
 
 /*Demonstrate special features*/
 #define LV_FONT_MONTSERRAT_12_SUBPX      0

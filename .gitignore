@@ -15,6 +15,7 @@
 # SquareLine Studio
 lvglProj/backup/
 lvglProj/cache/
+build/
 
 # Libraries (managed by lib_deps)
 lib/LovyanGFX-master/

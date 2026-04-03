@@ -10,10 +10,15 @@
 extern "C" {
 #endif
 
-// SCREEN: ui_startUP
-extern void ui_startUP_screen_init(void);
-extern void ui_startUP_screen_destroy(void);
-extern lv_obj_t * ui_startUP;
+// SCREEN: ui_StartUP
+extern void ui_StartUP_screen_init(void);
+extern void ui_StartUP_screen_destroy(void);
+extern lv_obj_t * ui_StartUP;
+extern lv_obj_t * ui_startinfo;
+extern lv_obj_t * ui_header1;
+extern lv_obj_t * ui_logo1;
+extern lv_obj_t * ui_time1;
+extern lv_obj_t * ui_processstat;
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus

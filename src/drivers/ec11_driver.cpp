@@ -1,114 +1,103 @@
 #include "ec11_driver.h"
+
 #include "../config.h"
 
-// RotaryEncoder 实例
-static RotaryEncoder* encoder = nullptr;
+namespace {
+RotaryEncoder *encoder = nullptr;
+EC11Callback event_callback = nullptr;
 
-// 状态变量
-static int32_t counter = 0;
-static EC11Direction last_direction = EC11Direction::NONE;
-static bool button_pressed = false;
-static bool acceleration_enabled = false;
+int32_t counter = 0;
+int32_t last_encoder_value = 0;
+EC11Direction last_direction = EC11Direction::NONE;
 
-static EC11Callback event_callback = nullptr;
+bool button_pressed = false;
+bool last_button_state = false;
+uint32_t button_pressed_at_ms = 0;
+uint32_t long_press_threshold_ms = 800;
 
-// 加速相关
-static uint32_t last_rotate_time = 0;
-static int rotate_speed = 1;
-static int32_t last_encoder_value = 0;
+bool acceleration_enabled = false;
+uint32_t last_rotate_time = 0;
+int rotate_speed = 1;
 
-// 旋转回调 - 库传递的是编码器累计值
-static void on_knob_turned(long value) {
-    int32_t diff = value - last_encoder_value;
+void emit_event(EC11Event event, int32_t value) {
+    if (event_callback) {
+        event_callback(event, value);
+    }
+}
+
+int get_rotate_speed() {
+    if (!acceleration_enabled) {
+        return 1;
+    }
+
+    const uint32_t now = millis();
+    const uint32_t time_diff = now - last_rotate_time;
+    last_rotate_time = now;
+
+    if (time_diff < 50) {
+        return 5;
+    }
+    if (time_diff < 100) {
+        return 3;
+    }
+    if (time_diff < 200) {
+        return 2;
+    }
+    return 1;
+}
+
+void on_knob_turned(long value) {
+    const int32_t diff = static_cast<int32_t>(value) - last_encoder_value;
+    if (diff == 0) {
+        return;
+    }
+
+    rotate_speed = get_rotate_speed();
+    const int32_t steps = (diff > 0) ? diff : -diff;
+    const int32_t delta = steps * rotate_speed;
 
     if (diff > 0) {
-        last_direction = EC11Direction::CLOCKWISE;
-
-        // 计算加速
-        if (acceleration_enabled) {
-            uint32_t time_diff = millis() - last_rotate_time;
-            if (time_diff < 50) {
-                rotate_speed = 5;
-            } else if (time_diff < 100) {
-                rotate_speed = 3;
-            } else if (time_diff < 200) {
-                rotate_speed = 2;
-            } else {
-                rotate_speed = 1;
-            }
-            last_rotate_time = millis();
-        } else {
-            rotate_speed = 1;
-        }
-
-        counter += rotate_speed;
-
-        if (event_callback) {
-            event_callback(EC11Event::ROTATE_CW, rotate_speed);
-        }
-    } else if (diff < 0) {
         last_direction = EC11Direction::COUNTER_CLOCKWISE;
-
-        // 计算加速
-        if (acceleration_enabled) {
-            uint32_t time_diff = millis() - last_rotate_time;
-            if (time_diff < 50) {
-                rotate_speed = 5;
-            } else if (time_diff < 100) {
-                rotate_speed = 3;
-            } else if (time_diff < 200) {
-                rotate_speed = 2;
-            } else {
-                rotate_speed = 1;
-            }
-            last_rotate_time = millis();
-        } else {
-            rotate_speed = 1;
-        }
-
-        counter -= rotate_speed;
-
-        if (event_callback) {
-            event_callback(EC11Event::ROTATE_CCW, -rotate_speed);
-        }
+        counter += delta;
+        emit_event(EC11Event::ROTATE_CCW, delta);
+    } else {
+        last_direction = EC11Direction::CLOCKWISE;
+        counter -= delta;
+        emit_event(EC11Event::ROTATE_CW, delta);
     }
 
-    last_encoder_value = value;
+    last_encoder_value = static_cast<int32_t>(value);
 }
 
-// 按键回调 - 库传递按键按下持续时间(ms)
-static void on_button_pressed(unsigned long duration) {
-    button_pressed = false;  // 按键已释放
-
-    if (event_callback) {
-        event_callback(EC11Event::BUTTON_RELEASE, (int32_t)duration);
-        // 短按视为单击
-        if (duration < 500) {
-            event_callback(EC11Event::BUTTON_CLICK, (int32_t)duration);
-        }
-    }
+void on_button_pressed(unsigned long duration) {
+    (void)duration;
 }
+} // namespace
 
 bool ec11_init(void) {
-    // 创建 RotaryEncoder 实例 (CLK=A, DT=B, SW)
-    encoder = new RotaryEncoder(EC11_CLK, EC11_DT, EC11_SW);
+    ec11_deinit();
 
+    encoder = new RotaryEncoder(EC11_CLK, EC11_DT, EC11_SW);
     if (!encoder) {
         return false;
     }
 
-    // 设置编码器类型 (使用外部上拉电阻)
     encoder->setEncoderType(EncoderType::HAS_PULLUP);
-
-    // 设置边界 (无边界限制)
     encoder->setBoundaries(-1000000, 1000000, false);
-
-    // 设置回调
     encoder->onTurned(&on_knob_turned);
     encoder->onPressed(&on_button_pressed);
-
-    // 初始化
     encoder->begin();
+
+    pinMode(EC11_SW, INPUT_PULLUP);
+
+    counter = 0;
+    last_encoder_value = 0;
+    last_direction = EC11Direction::NONE;
+    button_pressed = false;
+    last_button_state = false;
+    button_pressed_at_ms = 0;
+    rotate_speed = 1;
+    last_rotate_time = 0;
 
     return true;
 }
@@ -118,6 +107,7 @@ void ec11_deinit(void) {
         delete encoder;
         encoder = nullptr;
     }
+
     event_callback = nullptr;
 }
 
@@ -145,10 +135,34 @@ void ec11_set_acceleration(bool enable) {
     acceleration_enabled = enable;
 }
 
-void ec11_set_debounce(uint32_t ms) {
-    // 这个库内置了去抖，不需要手动设置
+void ec11_set_debounce(uint32_t debounce_ms) {
+    (void)debounce_ms;
+}
+
+void ec11_set_long_press_threshold(uint32_t threshold_ms) {
+    long_press_threshold_ms = threshold_ms;
 }
 
 void ec11_update(void) {
-    // 这个库使用中断，不需要在主循环中轮询
+    const bool current_button_state = (digitalRead(EC11_SW) == LOW);
+
+    if (current_button_state && !last_button_state) {
+        button_pressed = true;
+        button_pressed_at_ms = millis();
+        emit_event(EC11Event::BUTTON_PRESS, 0);
+    }
+
+    if (!current_button_state && last_button_state) {
+        button_pressed = false;
+        const uint32_t duration = millis() - button_pressed_at_ms;
+
+        emit_event(EC11Event::BUTTON_RELEASE, static_cast<int32_t>(duration));
+        if (duration >= long_press_threshold_ms) {
+            emit_event(EC11Event::BUTTON_LONG_PRESS, static_cast<int32_t>(duration));
+        } else {
+            emit_event(EC11Event::BUTTON_CLICK, static_cast<int32_t>(duration));
+        }
+    }
+
+    last_button_state = current_button_state;
 }

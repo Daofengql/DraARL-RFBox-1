@@ -30,11 +30,16 @@ void updateBacklight(float level) {
 }
 
 void setup() {
+    // Keep backlight off at boot until PWM is ready.
+    pinMode(BACKLIGHT_PIN, OUTPUT);
+    digitalWrite(BACKLIGHT_PIN, LOW);
+
     Serial.begin(115200);
 
     ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
     ledcAttachPin(BACKLIGHT_PIN, PWM_CHANNEL);
-    updateBacklight(current_brightness);
+    // Keep backlight off until startup flow begins.
+    updateBacklight(0.0f);
 
     initDisplay();
     lv_init();

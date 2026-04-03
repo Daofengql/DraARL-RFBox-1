@@ -11,6 +11,9 @@
 #include "../drivers/ec11_driver.h"
 #include "../ui/ui.h"
 
+// Backlight control is implemented in main.cpp.
+extern void updateBacklight(float level);
+
 namespace {
 constexpr uint32_t KEY_LONG_PRESS_MS = 1000;
 constexpr uint32_t STARTUP_STEP_INTERVAL_MS = 350;
@@ -89,7 +92,7 @@ void render_frequency_label() {
             const int written = snprintf(
                 rendered + write_pos,
                 sizeof(rendered) - write_pos,
-                "#00F2FF %c#",
+                "#FF6A00 %c#",
                 frequency_text[i]
             );
 
@@ -213,6 +216,9 @@ void start_boot_sequence(uint32_t now_ms) {
     if (app_state != AppState::POWER_WAIT) {
         return;
     }
+
+    // Turn on backlight only when startup begins.
+    updateBacklight(1.0f);
 
     app_state = AppState::STARTUP_LOADING;
     startup_step_index = 0;

@@ -6,6 +6,9 @@
 #include "ui.h"
 
 lv_obj_t * ui_main = NULL;
+lv_obj_t * ui_mainContainer = NULL;
+lv_obj_t * ui_infoPanel = NULL;
+lv_obj_t * ui_Info = NULL;
 lv_obj_t * ui_Freq = NULL;
 lv_obj_t * ui_TXCTCSS = NULL;
 lv_obj_t * ui_RXCTCSS = NULL;
@@ -29,44 +32,69 @@ void ui_main_screen_init(void)
     ui_main = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_main, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
-    ui_Freq = lv_label_create(ui_main);
+    ui_mainContainer = lv_obj_create(ui_main);
+    lv_obj_remove_style_all(ui_mainContainer);
+    lv_obj_set_width(ui_mainContainer, 320);
+    lv_obj_set_height(ui_mainContainer, 180);
+    lv_obj_set_align(ui_mainContainer, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_mainContainer, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_infoPanel = lv_obj_create(ui_mainContainer);
+    lv_obj_set_width(ui_infoPanel, 175);
+    lv_obj_set_height(ui_infoPanel, 35);
+    lv_obj_set_x(ui_infoPanel, 0);
+    lv_obj_set_y(ui_infoPanel, -30);
+    lv_obj_set_align(ui_infoPanel, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_infoPanel, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_set_style_bg_color(ui_infoPanel, lv_color_hex(0x198596), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_infoPanel, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_Info = lv_label_create(ui_infoPanel);
+    lv_obj_set_width(ui_Info, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Info, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Info, 0);
+    lv_obj_set_y(ui_Info, 1);
+    lv_obj_set_align(ui_Info, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Info, "BH5UVN-1  TX...");
+
+    ui_Freq = lv_label_create(ui_mainContainer);
     lv_obj_set_width(ui_Freq, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_Freq, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_Freq, 0);
-    lv_obj_set_y(ui_Freq, -7);
+    lv_obj_set_y(ui_Freq, 25);
     lv_obj_set_align(ui_Freq, LV_ALIGN_CENTER);
     lv_label_set_text(ui_Freq, "438.5000");
     lv_obj_set_style_text_color(ui_Freq, lv_color_hex(0x009BB2), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_Freq, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_Freq, &lv_font_montserrat_48, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_TXCTCSS = lv_label_create(ui_main);
+    ui_TXCTCSS = lv_label_create(ui_mainContainer);
     lv_obj_set_width(ui_TXCTCSS, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_TXCTCSS, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_TXCTCSS, -50);
-    lv_obj_set_y(ui_TXCTCSS, 40);
+    lv_obj_set_y(ui_TXCTCSS, 65);
     lv_obj_set_align(ui_TXCTCSS, LV_ALIGN_CENTER);
     lv_label_set_text(ui_TXCTCSS, "88.5");
     lv_obj_set_style_text_color(ui_TXCTCSS, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_TXCTCSS, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_TXCTCSS, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_RXCTCSS = lv_label_create(ui_main);
+    ui_RXCTCSS = lv_label_create(ui_mainContainer);
     lv_obj_set_width(ui_RXCTCSS, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_RXCTCSS, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_RXCTCSS, 80);
-    lv_obj_set_y(ui_RXCTCSS, 40);
+    lv_obj_set_y(ui_RXCTCSS, 65);
     lv_obj_set_align(ui_RXCTCSS, LV_ALIGN_CENTER);
     lv_label_set_text(ui_RXCTCSS, "88.5");
     lv_obj_set_style_text_color(ui_RXCTCSS, lv_color_hex(0xDDFF00), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_RXCTCSS, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_RXCTCSS, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_CTCSSinfo = lv_label_create(ui_main);
+    ui_CTCSSinfo = lv_label_create(ui_mainContainer);
     lv_obj_set_width(ui_CTCSSinfo, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_CTCSSinfo, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_CTCSSinfo, 4);
-    lv_obj_set_y(ui_CTCSSinfo, 40);
+    lv_obj_set_y(ui_CTCSSinfo, 65);
     lv_obj_set_align(ui_CTCSSinfo, LV_ALIGN_CENTER);
     lv_label_set_text(ui_CTCSSinfo, "TX:                        RX:                   ");
     lv_obj_set_style_text_color(ui_CTCSSinfo, lv_color_hex(0x70FF52), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -188,6 +216,9 @@ void ui_main_screen_destroy(void)
 
     // NULL screen variables
     ui_main = NULL;
+    ui_mainContainer = NULL;
+    ui_infoPanel = NULL;
+    ui_Info = NULL;
     ui_Freq = NULL;
     ui_TXCTCSS = NULL;
     ui_RXCTCSS = NULL;

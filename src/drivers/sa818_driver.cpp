@@ -16,16 +16,31 @@ static bool is_enabled = false;
 // 频率配置
 static uint32_t tx_freq = 433500;
 static uint32_t rx_freq = 433500;
-static uint16_t tx_ctcss = 0;
-static uint16_t rx_ctcss = 0;
-static uint16_t tx_cdcss = 0;
-static uint16_t rx_cdcss = 0;
+static char tx_subaudio[8] = "0000";
+static char rx_subaudio[8] = "0000";
 static SA818Offset offset_type = SA818Offset::OFFSET_NONE;
 static uint32_t offset_freq = 0;
 
 // 回调
 static SA818RxCallback rx_callback = nullptr;
 static bool last_rx_state = false;
+
+static constexpr uint16_t CDCSS_CODES[] = {
+    23,  25,  26,  31,  32,  43,  47,  51,  54,  65,  71,  72,  73,  74,  114, 115, 116,
+    125, 131, 132, 134, 143, 152, 155, 156, 162, 165, 172, 174, 205, 223, 226, 243, 244, 245,
+    251, 261, 263, 265, 271, 306, 311, 315, 331, 343, 346, 351, 364, 365, 371, 411, 412, 413,
+    423, 431, 432, 445, 464, 465, 466, 503, 506, 516, 532, 546, 565, 606, 612, 624, 627, 631,
+    632, 654, 662, 664, 703, 712, 723, 731, 732, 734, 743, 754
+};
+
+static bool is_valid_cdcss_code(uint16_t code) {
+    for (size_t i = 0; i < sizeof(CDCSS_CODES) / sizeof(CDCSS_CODES[0]); ++i) {
+        if (CDCSS_CODES[i] == code) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // 发送 AT 命令
 static bool send_at_command(const char *cmd, char *response, size_t resp_len, uint32_t timeout_ms = 100) {
@@ -145,16 +160,16 @@ bool sa818_set_tx_frequency(uint32_t freq_khz) {
 
     tx_freq = freq_khz;
 
-    char cmd[64];
+    char cmd[96];
     char response[32];
-    snprintf(cmd, sizeof(cmd), "AT+DMOSETGROUP=%d,%.4f,%.4f,%d,%d,%d,%d",
+    snprintf(cmd, sizeof(cmd), "AT+DMOSETGROUP=%d,%.4f,%.4f,%d,%d,%s,%s",
              is_wide_band ? 0 : 1,
              tx_freq / 1000.0,
              rx_freq / 1000.0,
              (int)current_squelch,
              current_volume,
-             tx_ctcss,
-             rx_ctcss);
+             tx_subaudio,
+             rx_subaudio);
 
     return send_at_command(cmd, response, sizeof(response));
 }
@@ -202,26 +217,38 @@ uint8_t sa818_get_volume(void) {
 }
 
 bool sa818_set_ctcss_tx(uint16_t freq_hz) {
-    tx_ctcss = freq_hz;
-    tx_cdcss = 0;
+    if (freq_hz > 38) {
+        return false;
+    }
+
+    snprintf(tx_subaudio, sizeof(tx_subaudio), "%04u", static_cast<unsigned int>(freq_hz));
     return sa818_set_tx_frequency(tx_freq);
 }
 
 bool sa818_set_ctcss_rx(uint16_t freq_hz) {
-    rx_ctcss = freq_hz;
-    rx_cdcss = 0;
+    if (freq_hz > 38) {
+        return false;
+    }
+
+    snprintf(rx_subaudio, sizeof(rx_subaudio), "%04u", static_cast<unsigned int>(freq_hz));
     return sa818_set_tx_frequency(tx_freq);
 }
 
 bool sa818_set_cdcss_tx(uint16_t code) {
-    tx_cdcss = code;
-    tx_ctcss = 0;
+    if (!is_valid_cdcss_code(code)) {
+        return false;
+    }
+
+    snprintf(tx_subaudio, sizeof(tx_subaudio), "%03uN", static_cast<unsigned int>(code));
     return sa818_set_tx_frequency(tx_freq);
 }
 
 bool sa818_set_cdcss_rx(uint16_t code) {
-    rx_cdcss = code;
-    rx_ctcss = 0;
+    if (!is_valid_cdcss_code(code)) {
+        return false;
+    }
+
+    snprintf(rx_subaudio, sizeof(rx_subaudio), "%03uN", static_cast<unsigned int>(code));
     return sa818_set_tx_frequency(tx_freq);
 }
 

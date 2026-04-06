@@ -14,6 +14,9 @@ extern "C" {
 extern void ui_main_screen_init(void);
 extern void ui_main_screen_destroy(void);
 extern lv_obj_t * ui_main;
+extern lv_obj_t * ui_mainContainer;
+extern lv_obj_t * ui_infoPanel;
+extern lv_obj_t * ui_Info;
 extern lv_obj_t * ui_Freq;
 extern lv_obj_t * ui_TXCTCSS;
 extern lv_obj_t * ui_RXCTCSS;

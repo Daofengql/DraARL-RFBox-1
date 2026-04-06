@@ -49,17 +49,17 @@ LV_IMG_DECLARE(
     ui_img_cloud_sync_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);    // assets/cloud_sync_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.png
 LV_IMG_DECLARE(
     ui_img_cloud_alert_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);    // assets/cloud_alert_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.png
+LV_IMG_DECLARE(
+    ui_img_bluetooth_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);    // assets/bluetooth_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.png
+LV_IMG_DECLARE(
+    ui_img_bluetooth_connected_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);    // assets/bluetooth_connected_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.png
+LV_IMG_DECLARE(
+    ui_img_cloud_done_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);    // assets/cloud_done_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.png
 LV_IMG_DECLARE(ui_img_wifi_1_png);    // assets/wifi_1.png
 LV_IMG_DECLARE(ui_img_wifi_2_png);    // assets/wifi_2.png
 LV_IMG_DECLARE(ui_img_wifi_3_png);    // assets/wifi_3.png
 LV_IMG_DECLARE(ui_img_wifi_4_png);    // assets/wifi_4.png
 LV_IMG_DECLARE(ui_img_wifi_off_png);    // assets/wifi_off.png
-LV_IMG_DECLARE(
-    ui_img_cloud_done_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);    // assets/cloud_done_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.png
-LV_IMG_DECLARE(
-    ui_img_bluetooth_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);    // assets/bluetooth_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.png
-LV_IMG_DECLARE(
-    ui_img_bluetooth_connected_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);    // assets/bluetooth_connected_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.png
 
 // UI INIT
 void ui_init(void);

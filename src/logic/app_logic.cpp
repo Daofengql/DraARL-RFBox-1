@@ -98,6 +98,12 @@ void start_boot_sequence(uint32_t now_ms) {
     startup_next_step_at_ms = now_ms;
 
     prepare_startup_screen();
+    const bool radio_ok = edit_controller_boot_radio_init();
+    if (radio_ok) {
+        append_startup_log("SA818 initialized and config synced.");
+    } else {
+        append_startup_log("SA818 init/config failed.");
+    }
     Serial.println("Boot sequence started.");
 }
 
@@ -180,4 +186,5 @@ void app_logic_update() {
     const uint32_t now_ms = millis();
     update_power_key(now_ms);
     update_startup_sequence(now_ms);
+    edit_controller_update();
 }

@@ -9,7 +9,9 @@ static SA818Type module_type = SA818Type::SA818_UHF;
 static SA818Power current_power = SA818Power::POWER_HIGH;
 static SA818Squelch current_squelch = SA818Squelch::SQ_4;
 static uint8_t current_volume = 5;
-static bool is_wide_band = true;
+// SA818 manual: 0 = 12.5KHz (narrow), 1 = 25KHz (wide).
+// Default to 12.5KHz to match common amateur narrowband usage.
+static bool is_wide_band = false;
 static bool is_tx = false;
 static bool is_enabled = false;
 
@@ -24,6 +26,68 @@ static uint32_t offset_freq = 0;
 // 回调
 static SA818RxCallback rx_callback = nullptr;
 static bool last_rx_state = false;
+static constexpr bool SA818_DEBUG_LOG = true;
+static constexpr uint32_t SA818_GROUP_CMD_TIMEOUT_MS = 500;
+
+static void log_uart_payload(const char *tag, const uint8_t *data, size_t len) {
+    if (!SA818_DEBUG_LOG || !tag) {
+        return;
+    }
+
+    if (!data || len == 0) {
+        Serial.printf("[SA818][%s] len=0 <empty>\n", tag);
+        return;
+    }
+
+    char text[196] = {0};
+    size_t pos = 0;
+    for (size_t i = 0; i < len && pos + 5 < sizeof(text); ++i) {
+        const uint8_t c = data[i];
+        if (c == '\r') {
+            text[pos++] = '\\';
+            text[pos++] = 'r';
+        } else if (c == '\n') {
+            text[pos++] = '\\';
+            text[pos++] = 'n';
+        } else if (c >= 32 && c <= 126) {
+            text[pos++] = static_cast<char>(c);
+        } else {
+            const int written = snprintf(text + pos, sizeof(text) - pos, "\\x%02X", static_cast<unsigned int>(c));
+            if (written <= 0) {
+                break;
+            }
+            pos += static_cast<size_t>(written);
+        }
+    }
+
+    if (pos >= sizeof(text)) {
+        text[sizeof(text) - 1] = '\0';
+    } else {
+        text[pos] = '\0';
+    }
+
+    Serial.printf("[SA818][%s][TXT] len=%u %s\n", tag, static_cast<unsigned int>(len), text);
+}
+
+static bool is_success_response(const char *response) {
+    if (!response) {
+        return false;
+    }
+
+    // Common success formats on SA818/DRA818 firmware.
+    if (strstr(response, "OK") != nullptr) {
+        return true;
+    }
+    if (strstr(response, "+DMO") != nullptr && strstr(response, ":0") != nullptr) {
+        return true;
+    }
+
+    // Some firmware variants may reply with a bare "1".
+    if (strcmp(response, "1") == 0 || strcmp(response, "1\r\n") == 0) {
+        return true;
+    }
+    return false;
+}
 
 static constexpr uint16_t CDCSS_CODES[] = {
     23,  25,  26,  31,  32,  43,  47,  51,  54,  65,  71,  72,  73,  74,  114, 115, 116,
@@ -46,18 +110,65 @@ static bool is_valid_cdcss_code(uint16_t code) {
 static bool send_at_command(const char *cmd, char *response, size_t resp_len, uint32_t timeout_ms = 100) {
     uart_flush_rx();
 
-    uart_send_string(cmd);
-    uart_send_string("\r\n");
+    char tx_packet[128] = {0};
+    int tx_len = snprintf(tx_packet, sizeof(tx_packet), "%s\r\n", cmd ? cmd : "");
+    if (tx_len <= 0) {
+        if (response && resp_len > 0) {
+            response[0] = '\0';
+        }
+        if (SA818_DEBUG_LOG) {
+            Serial.println("[SA818][AT>>] <format failed>");
+        }
+        return false;
+    }
+    if (tx_len >= static_cast<int>(sizeof(tx_packet))) {
+        tx_len = static_cast<int>(sizeof(tx_packet) - 1);
+    }
+
+    const size_t tx_size = static_cast<size_t>(tx_len);
+    if (SA818_DEBUG_LOG) {
+        Serial.printf("[SA818][AT>>][CMD] %s\n", cmd ? cmd : "<null>");
+        log_uart_payload("AT>>", reinterpret_cast<const uint8_t *>(tx_packet), tx_size);
+    }
+
+    const int written = uart_send(reinterpret_cast<const uint8_t *>(tx_packet), tx_size);
+    if (SA818_DEBUG_LOG) {
+        Serial.printf("[SA818][AT>>][WRITE] requested=%u sent=%d\n",
+                      static_cast<unsigned int>(tx_size),
+                      written);
+    }
+    if (written <= 0) {
+        if (response && resp_len > 0) {
+            response[0] = '\0';
+        }
+        return false;
+    }
 
     if (response && resp_len > 0) {
         int len = uart_receive((uint8_t *)response, resp_len - 1, timeout_ms);
         if (len > 0) {
             response[len] = '\0';
-            return strstr(response, "OK") != nullptr || strstr(response, "1") != nullptr;
+            if (SA818_DEBUG_LOG) {
+                log_uart_payload("AT<<", reinterpret_cast<const uint8_t *>(response), static_cast<size_t>(len));
+            }
+            const bool ok = is_success_response(response);
+            if (SA818_DEBUG_LOG) {
+                Serial.printf("[SA818][AT<<][PARSE] ok=%d\n", ok ? 1 : 0);
+            }
+            return ok;
         }
         response[0] = '\0';
+        if (SA818_DEBUG_LOG) {
+            Serial.printf("[SA818][AT<<] <timeout %lu ms, pending=%d>\n",
+                          static_cast<unsigned long>(timeout_ms),
+                          uart_available_bytes());
+        }
+        return false;
     }
 
+    if (SA818_DEBUG_LOG) {
+        Serial.println("[SA818][AT<<] <no response buffer>");
+    }
     return true;
 }
 
@@ -162,16 +273,15 @@ bool sa818_set_tx_frequency(uint32_t freq_khz) {
 
     char cmd[96];
     char response[32];
-    snprintf(cmd, sizeof(cmd), "AT+DMOSETGROUP=%d,%.4f,%.4f,%d,%d,%s,%s",
-             is_wide_band ? 0 : 1,
+    snprintf(cmd, sizeof(cmd), "AT+DMOSETGROUP=%d,%.4f,%.4f,%s,%d,%s",
+             is_wide_band ? 1 : 0,
              tx_freq / 1000.0,
              rx_freq / 1000.0,
-             (int)current_squelch,
-             current_volume,
              tx_subaudio,
+             (int)current_squelch,
              rx_subaudio);
 
-    return send_at_command(cmd, response, sizeof(response));
+    return send_at_command(cmd, response, sizeof(response), SA818_GROUP_CMD_TIMEOUT_MS);
 }
 
 bool sa818_set_rx_frequency(uint32_t freq_khz) {
@@ -286,8 +396,26 @@ bool sa818_get_version(char *buffer, size_t len) {
 }
 
 bool sa818_is_connected(void) {
-    char response[16];
-    return send_at_command("AT", response, sizeof(response));
+    char response[32] = {0};
+
+    // SA818 / DRA818 系列通常使用 AT+DMOCONNECT 进行握手。
+    if (send_at_command("AT+DMOCONNECT", response, sizeof(response), 500)) {
+        return true;
+    }
+    if (strstr(response, "+DMOCONNECT") != nullptr) {
+        return true;
+    }
+
+    // 兼容部分固件：普通 "AT" 可能返回 +DMOERROR，但这也能证明串口链路是通的。
+    response[0] = '\0';
+    if (send_at_command("AT", response, sizeof(response), 500)) {
+        return true;
+    }
+    if (strstr(response, "+DMOERROR") != nullptr) {
+        return true;
+    }
+
+    return false;
 }
 
 void sa818_set_rx_callback(SA818RxCallback callback) {

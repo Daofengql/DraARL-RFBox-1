@@ -21,7 +21,8 @@ bool uart_driver_init(void) {
         return false;
     }
 
-    if (uart_set_pin(UART_PORT_NUM, SA818_TXD, SA818_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
+    // Cross wiring: ESP TX -> SA818_RXD, ESP RX -> SA818_TXD
+    if (uart_set_pin(UART_PORT_NUM, SA818_RXD, SA818_TXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
         uart_driver_delete(UART_PORT_NUM);
         return false;
     }

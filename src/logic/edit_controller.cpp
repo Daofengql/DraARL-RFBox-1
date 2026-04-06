@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <lvgl.h>
+#include <Preferences.h>
 
 #include <cctype>
 #include <cstddef>
@@ -20,10 +21,10 @@ constexpr int8_t FREQ_EDITABLE_DIGITS = 7;
 constexpr uint32_t INFO_PANEL_COLOR_IDLE = 0x006EC7;
 constexpr uint32_t INFO_PANEL_COLOR_TX = 0xB71C1C;
 constexpr uint32_t INFO_PANEL_COLOR_RX = 0x2E7D32;
-constexpr uint32_t HIGHLIGHT_COLOR_SELECT = 0x00D1FF;
+constexpr uint32_t HIGHLIGHT_COLOR_SELECT = 0xFF6A00;
 constexpr uint32_t HIGHLIGHT_COLOR_EDIT = 0xFF6A00;
 
-constexpr char DEFAULT_INFO_TEXT[] = "BH5UVN-1  TX...";
+constexpr char DEFAULT_INFO_TEXT[] = "BH5UVN";
 
 enum class EditStage {
     NONE = 0,
@@ -71,11 +72,12 @@ constexpr uint16_t CDCSS_TONES[] = {
 constexpr size_t CTCSS_TONE_COUNT = sizeof(CTCSS_TONES) / sizeof(CTCSS_TONES[0]);
 constexpr size_t CDCSS_TONE_COUNT = sizeof(CDCSS_TONES) / sizeof(CDCSS_TONES[0]);
 constexpr size_t SUBAUDIO_OPTION_COUNT = 1 + CTCSS_TONE_COUNT + CDCSS_TONE_COUNT;
+constexpr const char *RADIO_CFG_NS = "radio_cfg";
 
 EditStage edit_stage = EditStage::NONE;
 EditMode edit_mode = EditMode::NONE;
 
-uint32_t tx_frequency_x10000 = 4385000;  // 438.5000 MHz
+uint32_t tx_frequency_x10000 = 4395000;  // 439.5000 MHz
 uint32_t rx_frequency_x10000 = 4385000;  // 438.5000 MHz
 SubAudioSetting tx_subaudio = {SubAudioType::CTCSS, 7};  // 88.5
 SubAudioSetting rx_subaudio = {SubAudioType::CTCSS, 7};  // 88.5
@@ -83,6 +85,11 @@ SubAudioSetting rx_subaudio = {SubAudioType::CTCSS, 7};  // 88.5
 uint8_t digit_positions[16] = {};
 uint8_t digit_count = 0;
 int8_t editing_digit_index = -1;
+
+Preferences radio_prefs;
+bool sql_rx_active = false;
+bool radio_cfg_dirty = false;
+lv_obj_t *save_overlay = nullptr;
 
 bool is_editing_session_active() {
     return edit_stage != EditStage::NONE;
@@ -128,6 +135,19 @@ uint32_t clamp_frequency_range(int64_t value) {
     return static_cast<uint32_t>(value);
 }
 
+SubAudioSetting sanitize_subaudio(SubAudioType type, uint8_t index) {
+    switch (type) {
+        case SubAudioType::OFF:
+            return {SubAudioType::OFF, 0};
+        case SubAudioType::CTCSS:
+            return {SubAudioType::CTCSS, static_cast<uint8_t>(index % CTCSS_TONE_COUNT)};
+        case SubAudioType::CDCSS_N:
+            return {SubAudioType::CDCSS_N, static_cast<uint8_t>(index % CDCSS_TONE_COUNT)};
+        default:
+            return {SubAudioType::OFF, 0};
+    }
+}
+
 void format_frequency(uint32_t value_x10000, char *buffer, size_t buffer_len) {
     if (!buffer || buffer_len == 0) {
         return;
@@ -138,7 +158,54 @@ void format_frequency(uint32_t value_x10000, char *buffer, size_t buffer_len) {
     snprintf(buffer, buffer_len, "%03lu.%04lu", static_cast<unsigned long>(mhz), static_cast<unsigned long>(decimal));
 }
 
+void format_subaudio_text_compact(const SubAudioSetting &setting, char *buffer, size_t buffer_len) {
+    if (!buffer || buffer_len == 0) {
+        return;
+    }
+
+    switch (setting.type) {
+        case SubAudioType::OFF:
+            snprintf(buffer, buffer_len, "OFF");
+            break;
+        case SubAudioType::CTCSS:
+            snprintf(buffer, buffer_len, "T%u", static_cast<unsigned int>(setting.index + 1));
+            break;
+        case SubAudioType::CDCSS_N:
+            snprintf(buffer, buffer_len, "D%03uN", static_cast<unsigned int>(CDCSS_TONES[setting.index]));
+            break;
+        default:
+            snprintf(buffer, buffer_len, "OFF");
+            break;
+    }
+}
+
+void log_radio_config(const char *tag) {
+    char tx_freq[16] = {0};
+    char rx_freq[16] = {0};
+    char tx_tone[16] = {0};
+    char rx_tone[16] = {0};
+
+    format_frequency(tx_frequency_x10000, tx_freq, sizeof(tx_freq));
+    format_frequency(rx_frequency_x10000, rx_freq, sizeof(rx_freq));
+    format_subaudio_text_compact(tx_subaudio, tx_tone, sizeof(tx_tone));
+    format_subaudio_text_compact(rx_subaudio, rx_tone, sizeof(rx_tone));
+
+    Serial.printf("[RADIO][%s] TX=%s RX=%s TXTone=%s RXTone=%s dirty=%d\n",
+                  tag ? tag : "LOG",
+                  tx_freq,
+                  rx_freq,
+                  tx_tone,
+                  rx_tone,
+                  radio_cfg_dirty ? 1 : 0);
+}
+
 uint32_t get_display_frequency_value() {
+    // In idle runtime, when RF is being received and forwarded to NET,
+    // show RX frequency on the main big frequency label.
+    if (!is_editing_session_active() && sql_rx_active) {
+        return rx_frequency_x10000;
+    }
+
     if (is_rx_stage()) {
         return rx_frequency_x10000;
     }
@@ -270,17 +337,126 @@ bool apply_subaudio_to_sa818(bool is_tx, const SubAudioSetting &setting) {
     }
 }
 
-void sync_subaudio_to_sa818_if_ready() {
+bool apply_all_radio_config_to_sa818() {
     if (!sa818_is_enabled()) {
+        return false;
+    }
+
+    const uint32_t tx_khz = tx_frequency_x10000 / 10;
+    const uint32_t rx_khz = rx_frequency_x10000 / 10;
+
+    bool ok = sa818_set_frequency(tx_khz, rx_khz);
+    ok = apply_subaudio_to_sa818(true, tx_subaudio) && ok;
+    ok = apply_subaudio_to_sa818(false, rx_subaudio) && ok;
+    return ok;
+}
+
+void load_radio_config_from_nvs() {
+    if (!radio_prefs.begin(RADIO_CFG_NS, true)) {
         return;
     }
 
-    if (!apply_subaudio_to_sa818(true, tx_subaudio)) {
-        Serial.println("SA818 TX subaudio update failed.");
+    tx_frequency_x10000 = clamp_frequency_range(radio_prefs.getULong("tx_f_x10k", tx_frequency_x10000));
+    rx_frequency_x10000 = clamp_frequency_range(radio_prefs.getULong("rx_f_x10k", rx_frequency_x10000));
+
+    const SubAudioType tx_type = static_cast<SubAudioType>(radio_prefs.getUChar("tx_type", static_cast<uint8_t>(tx_subaudio.type)));
+    const SubAudioType rx_type = static_cast<SubAudioType>(radio_prefs.getUChar("rx_type", static_cast<uint8_t>(rx_subaudio.type)));
+    tx_subaudio = sanitize_subaudio(tx_type, radio_prefs.getUChar("tx_idx", tx_subaudio.index));
+    rx_subaudio = sanitize_subaudio(rx_type, radio_prefs.getUChar("rx_idx", rx_subaudio.index));
+
+    radio_prefs.end();
+}
+
+bool save_radio_config_to_nvs() {
+    if (!radio_prefs.begin(RADIO_CFG_NS, false)) {
+        return false;
     }
-    if (!apply_subaudio_to_sa818(false, rx_subaudio)) {
-        Serial.println("SA818 RX subaudio update failed.");
+
+    radio_prefs.putULong("tx_f_x10k", tx_frequency_x10000);
+    radio_prefs.putULong("rx_f_x10k", rx_frequency_x10000);
+    radio_prefs.putUChar("tx_type", static_cast<uint8_t>(tx_subaudio.type));
+    radio_prefs.putUChar("tx_idx", tx_subaudio.index);
+    radio_prefs.putUChar("rx_type", static_cast<uint8_t>(rx_subaudio.type));
+    radio_prefs.putUChar("rx_idx", rx_subaudio.index);
+
+    const bool ok =
+        (radio_prefs.getULong("tx_f_x10k", 0xFFFFFFFFUL) == tx_frequency_x10000) &&
+        (radio_prefs.getULong("rx_f_x10k", 0xFFFFFFFFUL) == rx_frequency_x10000) &&
+        (radio_prefs.getUChar("tx_type", 0xFF) == static_cast<uint8_t>(tx_subaudio.type)) &&
+        (radio_prefs.getUChar("tx_idx", 0xFF) == tx_subaudio.index) &&
+        (radio_prefs.getUChar("rx_type", 0xFF) == static_cast<uint8_t>(rx_subaudio.type)) &&
+        (radio_prefs.getUChar("rx_idx", 0xFF) == rx_subaudio.index);
+
+    radio_prefs.end();
+    return ok;
+}
+
+void show_save_overlay() {
+    if (save_overlay || !lv_scr_act()) {
+        return;
     }
+
+    save_overlay = lv_obj_create(lv_scr_act());
+    lv_obj_remove_style_all(save_overlay);
+    lv_obj_set_size(save_overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(save_overlay, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(save_overlay, LV_OPA_50, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(save_overlay, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_clear_flag(save_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(save_overlay, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *panel = lv_obj_create(save_overlay);
+    lv_obj_set_size(panel, 180, 76);
+    lv_obj_set_align(panel, LV_ALIGN_CENTER);
+    lv_obj_set_style_radius(panel, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x1E2A36), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x4A657F), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(panel, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *label = lv_label_create(panel);
+    lv_label_set_text(label, "Saving...");
+    lv_obj_set_style_text_color(label, lv_color_hex(0xDFF3FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_align(label, LV_ALIGN_CENTER);
+
+    lv_obj_move_foreground(save_overlay);
+    lv_obj_invalidate(save_overlay);
+    lv_refr_now(lv_disp_get_default());
+}
+
+void hide_save_overlay() {
+    if (!save_overlay) {
+        return;
+    }
+
+    lv_obj_del(save_overlay);
+    save_overlay = nullptr;
+    lv_refr_now(lv_disp_get_default());
+}
+
+void save_and_apply_radio_config() {
+    if (!radio_cfg_dirty) {
+        return;
+    }
+
+    show_save_overlay();
+
+    if (!save_radio_config_to_nvs()) {
+        Serial.println("Radio config save to NVS failed.");
+        log_radio_config("SAVE_FAIL");
+    } else {
+        Serial.println("Radio config saved to NVS.");
+        radio_cfg_dirty = false;
+        log_radio_config("SAVED");
+    }
+
+    if (sa818_is_enabled() && !apply_all_radio_config_to_sa818()) {
+        Serial.println("SA818 apply config failed after save.");
+    }
+
+    hide_save_overlay();
 }
 
 void update_info_panel_state() {
@@ -316,9 +492,13 @@ void update_info_panel_state() {
             break;
         case EditStage::NONE:
         default:
-            lv_obj_set_style_bg_color(ui_infoPanel, lv_color_hex(INFO_PANEL_COLOR_IDLE), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_bg_color(
+                ui_infoPanel,
+                lv_color_hex(sql_rx_active ? INFO_PANEL_COLOR_RX : INFO_PANEL_COLOR_IDLE),
+                LV_PART_MAIN | LV_STATE_DEFAULT
+            );
             lv_obj_set_style_bg_opa(ui_infoPanel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_label_set_text(ui_Info, DEFAULT_INFO_TEXT);
+            lv_label_set_text(ui_Info, sql_rx_active ? "RF->NET" : DEFAULT_INFO_TEXT);
             break;
     }
 }
@@ -511,6 +691,8 @@ void advance_to_next_stage() {
             set_edit_stage(EditStage::RX_TONE);
             break;
         case EditStage::RX_TONE:
+            // Leave SA818 settings: persist and then apply to module.
+            save_and_apply_radio_config();
             set_edit_stage(EditStage::SETTINGS);
             break;
         case EditStage::SETTINGS:
@@ -545,6 +727,7 @@ void step_frequency_digit(int32_t delta) {
     uint32_t &active_frequency = get_active_frequency_value();
     const int64_t candidate = static_cast<int64_t>(active_frequency) + static_cast<int64_t>(delta) * step;
     active_frequency = clamp_frequency_range(candidate);
+    radio_cfg_dirty = true;
 
     render_frequency_label();
 }
@@ -579,7 +762,7 @@ void step_subaudio_option(int32_t delta) {
     }
 
     get_active_subaudio_setting() = option_to_subaudio(static_cast<size_t>(option));
-    sync_subaudio_to_sa818_if_ready();
+    radio_cfg_dirty = true;
     refresh_edit_widgets();
 }
 
@@ -591,12 +774,58 @@ void apply_main_screen_overrides() {
 } // namespace
 
 void edit_controller_init() {
+    load_radio_config_from_nvs();
+    radio_cfg_dirty = false;
+    log_radio_config("LOADED");
     set_edit_stage(EditStage::NONE);
 }
 
 void edit_controller_on_enter_main_screen() {
     apply_main_screen_overrides();
     exit_edit_session();
+}
+
+bool edit_controller_boot_radio_init() {
+    if (!sa818_init(SA818Type::SA818_UHF)) {
+        Serial.println("SA818 init failed.");
+        return false;
+    }
+
+    // Required boot sequence: EN high -> wait 500ms -> send AT probe.
+    sa818_enable(true);
+    delay(500);
+
+    const bool at_ok = sa818_is_connected();
+    if (!at_ok) {
+        Serial.println("SA818 AT probe failed.");
+        return false;
+    }
+
+    sql_rx_active = sa818_is_rx();
+
+    const bool cfg_ok = apply_all_radio_config_to_sa818();
+    if (!cfg_ok) {
+        Serial.println("SA818 initial config apply failed.");
+    } else {
+        log_radio_config("BOOT_APPLY");
+    }
+    return cfg_ok;
+}
+
+void edit_controller_update() {
+    if (!sa818_is_enabled()) {
+        return;
+    }
+
+    const bool current_sql_state = sa818_is_rx();
+    if (current_sql_state == sql_rx_active) {
+        return;
+    }
+
+    sql_rx_active = current_sql_state;
+    if (!is_editing_session_active()) {
+        refresh_edit_widgets();
+    }
 }
 
 void edit_controller_on_encoder_event(EC11Event event, int32_t value) {

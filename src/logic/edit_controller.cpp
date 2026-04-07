@@ -2,7 +2,6 @@
 
 #include <Arduino.h>
 #include <lvgl.h>
-#include <Preferences.h>
 
 #include <cctype>
 #include <cstddef>
@@ -12,6 +11,7 @@
 
 #include "../drivers/sa818_driver.h"
 #include "../ui/ui.h"
+#include "device_config.h"
 
 namespace {
 constexpr uint32_t FREQ_MIN_X10000 = 4000000;  // 400.0000 MHz
@@ -32,6 +32,7 @@ enum class EditStage {
     RX_FREQ,
     TX_TONE,
     RX_TONE,
+    RX_SQL,
     SETTINGS,
 };
 
@@ -41,16 +42,8 @@ enum class EditMode {
     EDIT,
 };
 
-enum class SubAudioType {
-    OFF = 0,
-    CTCSS,
-    CDCSS_N,
-};
-
-struct SubAudioSetting {
-    SubAudioType type;
-    uint8_t index;
-};
+using SubAudioType = device_config::SubAudioType;
+using SubAudioSetting = device_config::SubAudioSetting;
 
 // SA818 manual CTCSS 1..38.
 constexpr const char *CTCSS_TONES[] = {
@@ -72,7 +65,6 @@ constexpr uint16_t CDCSS_TONES[] = {
 constexpr size_t CTCSS_TONE_COUNT = sizeof(CTCSS_TONES) / sizeof(CTCSS_TONES[0]);
 constexpr size_t CDCSS_TONE_COUNT = sizeof(CDCSS_TONES) / sizeof(CDCSS_TONES[0]);
 constexpr size_t SUBAUDIO_OPTION_COUNT = 1 + CTCSS_TONE_COUNT + CDCSS_TONE_COUNT;
-constexpr const char *RADIO_CFG_NS = "radio_cfg";
 
 EditStage edit_stage = EditStage::NONE;
 EditMode edit_mode = EditMode::NONE;
@@ -81,12 +73,13 @@ uint32_t tx_frequency_x10000 = 4395000;  // 439.5000 MHz
 uint32_t rx_frequency_x10000 = 4385000;  // 438.5000 MHz
 SubAudioSetting tx_subaudio = {SubAudioType::CTCSS, 7};  // 88.5
 SubAudioSetting rx_subaudio = {SubAudioType::CTCSS, 7};  // 88.5
+SA818Squelch radio_squelch = SA818Squelch::SQ_4;
+bool radio_wide_band = false;
 
 uint8_t digit_positions[16] = {};
 uint8_t digit_count = 0;
 int8_t editing_digit_index = -1;
 
-Preferences radio_prefs;
 bool sql_rx_active = false;
 bool radio_cfg_dirty = false;
 lv_obj_t *save_overlay = nullptr;
@@ -103,8 +96,14 @@ bool is_tone_stage() {
     return edit_stage == EditStage::TX_TONE || edit_stage == EditStage::RX_TONE;
 }
 
+bool is_sql_stage() {
+    return edit_stage == EditStage::RX_SQL;
+}
+
 bool is_rx_stage() {
-    return edit_stage == EditStage::RX_FREQ || edit_stage == EditStage::RX_TONE;
+    return edit_stage == EditStage::RX_FREQ ||
+           edit_stage == EditStage::RX_TONE ||
+           edit_stage == EditStage::RX_SQL;
 }
 
 bool is_select_mode() {
@@ -190,12 +189,14 @@ void log_radio_config(const char *tag) {
     format_subaudio_text_compact(tx_subaudio, tx_tone, sizeof(tx_tone));
     format_subaudio_text_compact(rx_subaudio, rx_tone, sizeof(rx_tone));
 
-    Serial.printf("[RADIO][%s] TX=%s RX=%s TXTone=%s RXTone=%s dirty=%d\n",
+    Serial.printf("[RADIO][%s] TX=%s RX=%s TXTone=%s RXTone=%s SQL=%u BW=%s dirty=%d\n",
                   tag ? tag : "LOG",
                   tx_freq,
                   rx_freq,
                   tx_tone,
                   rx_tone,
+                  static_cast<unsigned int>(radio_squelch),
+                  radio_wide_band ? "wide" : "narrow",
                   radio_cfg_dirty ? 1 : 0);
 }
 
@@ -337,58 +338,87 @@ bool apply_subaudio_to_sa818(bool is_tx, const SubAudioSetting &setting) {
     }
 }
 
+void build_subaudio_string(const SubAudioSetting &setting, char *buffer, size_t buffer_len) {
+    if (!buffer || buffer_len == 0) {
+        return;
+    }
+    switch (setting.type) {
+        case SubAudioType::CTCSS:
+            if (setting.index < CTCSS_TONE_COUNT) {
+                snprintf(buffer, buffer_len, "%04u", static_cast<unsigned int>(setting.index + 1));
+            } else {
+                snprintf(buffer, buffer_len, "0000");
+            }
+            break;
+        case SubAudioType::CDCSS_N:
+            if (setting.index < CDCSS_TONE_COUNT) {
+                snprintf(buffer, buffer_len, "%03uN", static_cast<unsigned int>(CDCSS_TONES[setting.index]));
+            } else {
+                snprintf(buffer, buffer_len, "0000");
+            }
+            break;
+        case SubAudioType::OFF:
+        default:
+            snprintf(buffer, buffer_len, "0000");
+            break;
+    }
+}
+
 bool apply_all_radio_config_to_sa818() {
     if (!sa818_is_enabled()) {
         return false;
     }
 
-    const uint32_t tx_khz = tx_frequency_x10000 / 10;
-    const uint32_t rx_khz = rx_frequency_x10000 / 10;
+    char tx_sub[8] = {0};
+    char rx_sub[8] = {0};
+    build_subaudio_string(tx_subaudio, tx_sub, sizeof(tx_sub));
+    build_subaudio_string(rx_subaudio, rx_sub, sizeof(rx_sub));
 
-    bool ok = sa818_set_frequency(tx_khz, rx_khz);
-    ok = apply_subaudio_to_sa818(true, tx_subaudio) && ok;
-    ok = apply_subaudio_to_sa818(false, rx_subaudio) && ok;
-    return ok;
+    SA818GroupConfig group = {};
+    group.tx_freq_khz = tx_frequency_x10000 / 10;
+    group.rx_freq_khz = rx_frequency_x10000 / 10;
+    group.tx_subaudio = tx_sub;
+    group.rx_subaudio = rx_sub;
+    group.squelch = radio_squelch;
+    group.wide_band = radio_wide_band;
+
+    return sa818_apply_group(group);
 }
 
-void load_radio_config_from_nvs() {
-    if (!radio_prefs.begin(RADIO_CFG_NS, true)) {
-        return;
-    }
-
-    tx_frequency_x10000 = clamp_frequency_range(radio_prefs.getULong("tx_f_x10k", tx_frequency_x10000));
-    rx_frequency_x10000 = clamp_frequency_range(radio_prefs.getULong("rx_f_x10k", rx_frequency_x10000));
-
-    const SubAudioType tx_type = static_cast<SubAudioType>(radio_prefs.getUChar("tx_type", static_cast<uint8_t>(tx_subaudio.type)));
-    const SubAudioType rx_type = static_cast<SubAudioType>(radio_prefs.getUChar("rx_type", static_cast<uint8_t>(rx_subaudio.type)));
-    tx_subaudio = sanitize_subaudio(tx_type, radio_prefs.getUChar("tx_idx", tx_subaudio.index));
-    rx_subaudio = sanitize_subaudio(rx_type, radio_prefs.getUChar("rx_idx", rx_subaudio.index));
-
-    radio_prefs.end();
+device_config::RadioConfig build_radio_config_snapshot() {
+    device_config::RadioConfig config = {};
+    config.tx_frequency_x10000 = tx_frequency_x10000;
+    config.rx_frequency_x10000 = rx_frequency_x10000;
+    config.tx_subaudio = tx_subaudio;
+    config.rx_subaudio = rx_subaudio;
+    config.squelch = static_cast<uint8_t>(radio_squelch);
+    config.wide_band = radio_wide_band;
+    return config;
 }
 
-bool save_radio_config_to_nvs() {
-    if (!radio_prefs.begin(RADIO_CFG_NS, false)) {
-        return false;
+void apply_runtime_radio_config(const device_config::RadioConfig &config) {
+    tx_frequency_x10000 = clamp_frequency_range(config.tx_frequency_x10000);
+    rx_frequency_x10000 = clamp_frequency_range(config.rx_frequency_x10000);
+    tx_subaudio = sanitize_subaudio(config.tx_subaudio.type, config.tx_subaudio.index);
+    rx_subaudio = sanitize_subaudio(config.rx_subaudio.type, config.rx_subaudio.index);
+
+    uint8_t sql = config.squelch;
+    if (sql > 8) {
+        sql = 4;
     }
+    radio_squelch = static_cast<SA818Squelch>(sql);
+    radio_wide_band = config.wide_band;
+}
 
-    radio_prefs.putULong("tx_f_x10k", tx_frequency_x10000);
-    radio_prefs.putULong("rx_f_x10k", rx_frequency_x10000);
-    radio_prefs.putUChar("tx_type", static_cast<uint8_t>(tx_subaudio.type));
-    radio_prefs.putUChar("tx_idx", tx_subaudio.index);
-    radio_prefs.putUChar("rx_type", static_cast<uint8_t>(rx_subaudio.type));
-    radio_prefs.putUChar("rx_idx", rx_subaudio.index);
+void load_radio_config_from_storage() {
+    device_config::DeviceConfig full_config = {};
+    device_config::set_defaults(full_config);
+    device_config::load(full_config);
+    apply_runtime_radio_config(full_config.radio);
+}
 
-    const bool ok =
-        (radio_prefs.getULong("tx_f_x10k", 0xFFFFFFFFUL) == tx_frequency_x10000) &&
-        (radio_prefs.getULong("rx_f_x10k", 0xFFFFFFFFUL) == rx_frequency_x10000) &&
-        (radio_prefs.getUChar("tx_type", 0xFF) == static_cast<uint8_t>(tx_subaudio.type)) &&
-        (radio_prefs.getUChar("tx_idx", 0xFF) == tx_subaudio.index) &&
-        (radio_prefs.getUChar("rx_type", 0xFF) == static_cast<uint8_t>(rx_subaudio.type)) &&
-        (radio_prefs.getUChar("rx_idx", 0xFF) == rx_subaudio.index);
-
-    radio_prefs.end();
-    return ok;
+bool save_radio_config_to_storage() {
+    return device_config::save_radio(build_radio_config_snapshot());
 }
 
 void show_save_overlay() {
@@ -443,11 +473,11 @@ void save_and_apply_radio_config() {
 
     show_save_overlay();
 
-    if (!save_radio_config_to_nvs()) {
-        Serial.println("Radio config save to NVS failed.");
+    if (!save_radio_config_to_storage()) {
+        Serial.println("Radio config save failed.");
         log_radio_config("SAVE_FAIL");
     } else {
-        Serial.println("Radio config saved to NVS.");
+        Serial.println("Radio config saved.");
         radio_cfg_dirty = false;
         log_radio_config("SAVED");
     }
@@ -484,6 +514,11 @@ void update_info_panel_state() {
             lv_obj_set_style_bg_color(ui_infoPanel, lv_color_hex(INFO_PANEL_COLOR_RX), LV_PART_MAIN | LV_STATE_DEFAULT);
             lv_obj_set_style_bg_opa(ui_infoPanel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
             lv_label_set_text(ui_Info, "RX Tone");
+            break;
+        case EditStage::RX_SQL:
+            lv_obj_set_style_bg_color(ui_infoPanel, lv_color_hex(INFO_PANEL_COLOR_RX), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_bg_opa(ui_infoPanel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_label_set_text(ui_Info, "RX SQL");
             break;
         case EditStage::SETTINGS:
             lv_obj_set_style_bg_color(ui_infoPanel, lv_color_hex(INFO_PANEL_COLOR_IDLE), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -536,6 +571,26 @@ void render_subaudio_labels() {
     }
 }
 
+void render_sql_label() {
+    if (!ui_RXSQL) {
+        return;
+    }
+
+    char sql_text[8] = {0};
+    snprintf(sql_text, sizeof(sql_text), "%u", static_cast<unsigned int>(radio_squelch));
+
+    if (edit_stage == EditStage::RX_SQL) {
+        lv_label_set_recolor(ui_RXSQL, true);
+        char rendered[24] = {0};
+        snprintf(rendered, sizeof(rendered), "#%06lX %s#", static_cast<unsigned long>(active_highlight_color()), sql_text);
+        lv_label_set_text(ui_RXSQL, rendered);
+        return;
+    }
+
+    lv_label_set_recolor(ui_RXSQL, false);
+    lv_label_set_text(ui_RXSQL, sql_text);
+}
+
 void clear_selection_border(lv_obj_t *obj) {
     if (!obj) {
         return;
@@ -559,6 +614,7 @@ void update_selection_border_state() {
     clear_selection_border(ui_Freq);
     clear_selection_border(ui_TXCTCSS);
     clear_selection_border(ui_RXCTCSS);
+    clear_selection_border(ui_RXSQL);
     clear_selection_border(ui_toSetting);
 
     if (!is_editing_session_active()) {
@@ -579,6 +635,11 @@ void update_selection_border_state() {
 
     if (edit_stage == EditStage::RX_TONE) {
         apply_selection_border(ui_RXCTCSS, border_color, 2);
+        return;
+    }
+
+    if (edit_stage == EditStage::RX_SQL) {
+        apply_selection_border(ui_RXSQL, border_color, 2);
         return;
     }
 
@@ -653,6 +714,7 @@ void refresh_edit_widgets() {
     update_info_panel_state();
     render_frequency_label();
     render_subaudio_labels();
+    render_sql_label();
     update_selection_border_state();
 }
 
@@ -679,6 +741,15 @@ void exit_edit_session() {
     set_edit_stage(EditStage::NONE);
 }
 
+void open_settings_page() {
+    if (!ui_SettingPAGE) {
+        return;
+    }
+
+    exit_edit_session();
+    lv_disp_load_scr(ui_SettingPAGE);
+}
+
 void advance_to_next_stage() {
     switch (edit_stage) {
         case EditStage::TX_FREQ:
@@ -691,6 +762,9 @@ void advance_to_next_stage() {
             set_edit_stage(EditStage::RX_TONE);
             break;
         case EditStage::RX_TONE:
+            set_edit_stage(EditStage::RX_SQL);
+            break;
+        case EditStage::RX_SQL:
             // Leave SA818 settings: persist and then apply to module.
             save_and_apply_radio_config();
             set_edit_stage(EditStage::SETTINGS);
@@ -766,6 +840,25 @@ void step_subaudio_option(int32_t delta) {
     refresh_edit_widgets();
 }
 
+void step_squelch(int32_t delta) {
+    if (!is_sql_stage() || !is_edit_mode() || delta == 0) {
+        return;
+    }
+
+    int32_t sql = static_cast<int32_t>(radio_squelch);
+    sql += delta;
+
+    constexpr int32_t SQ_COUNT = 9;
+    sql %= SQ_COUNT;
+    if (sql < 0) {
+        sql += SQ_COUNT;
+    }
+
+    radio_squelch = static_cast<SA818Squelch>(sql);
+    radio_cfg_dirty = true;
+    refresh_edit_widgets();
+}
+
 void apply_main_screen_overrides() {
     if (ui_hasNewUpdate) {
         lv_obj_add_flag(ui_hasNewUpdate, LV_OBJ_FLAG_HIDDEN);
@@ -774,7 +867,7 @@ void apply_main_screen_overrides() {
 } // namespace
 
 void edit_controller_init() {
-    load_radio_config_from_nvs();
+    load_radio_config_from_storage();
     radio_cfg_dirty = false;
     log_radio_config("LOADED");
     set_edit_stage(EditStage::NONE);
@@ -840,6 +933,8 @@ void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
                 }
             } else if (is_tone_stage()) {
                 step_subaudio_option(step);
+            } else if (is_sql_stage()) {
+                step_squelch(step);
             }
             break;
         }
@@ -853,6 +948,8 @@ void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
                 }
             } else if (is_tone_stage()) {
                 step_subaudio_option(-step);
+            } else if (is_sql_stage()) {
+                step_squelch(-step);
             }
             break;
         }
@@ -861,6 +958,8 @@ void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
                 enter_edit_session();
             } else if (is_frequency_stage()) {
                 toggle_frequency_edit_mode();
+            } else if (edit_stage == EditStage::SETTINGS) {
+                open_settings_page();
             }
             break;
         case EC11Event::BUTTON_LONG_PRESS:
@@ -876,4 +975,35 @@ void edit_controller_on_key0_short_press() {
         return;
     }
     advance_to_next_stage();
+}
+
+void edit_controller_get_radio_config(device_config::RadioConfig &config) {
+    config = build_radio_config_snapshot();
+}
+
+bool edit_controller_set_radio_config(const device_config::RadioConfig &config, bool persist) {
+    apply_runtime_radio_config(config);
+    radio_cfg_dirty = !persist;
+
+    if (persist) {
+        if (!save_radio_config_to_storage()) {
+            Serial.println("External radio config save failed.");
+            log_radio_config("EXT_SAVE_FAIL");
+            refresh_edit_widgets();
+            return false;
+        }
+        radio_cfg_dirty = false;
+    }
+
+    bool ok = true;
+    if (sa818_is_enabled()) {
+        ok = apply_all_radio_config_to_sa818();
+        if (!ok) {
+            Serial.println("External radio config apply failed.");
+        }
+    }
+
+    log_radio_config("EXT_APPLY");
+    refresh_edit_widgets();
+    return ok;
 }

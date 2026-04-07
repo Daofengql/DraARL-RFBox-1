@@ -8,6 +8,7 @@
 #include "../config.h"
 #include "../drivers/ec11_driver.h"
 #include "../ui/ui.h"
+#include "connectivity_manager.h"
 #include "edit_controller.h"
 
 // Backlight control is implemented in main.cpp.
@@ -62,6 +63,7 @@ void enter_main_screen() {
 
     lv_disp_load_scr(ui_main);
     edit_controller_on_enter_main_screen();
+    connectivity_manager_on_main_screen_enter();
 
     Serial.println("Boot sequence finished. Main screen loaded.");
 }
@@ -104,7 +106,17 @@ void start_boot_sequence(uint32_t now_ms) {
     } else {
         append_startup_log("SA818 init/config failed.");
     }
+    connectivity_manager_init();
+    append_startup_log("WiFi subsystem initialized.");
     Serial.println("Boot sequence started.");
+}
+
+void on_encoder_event(EC11Event event, int32_t value) {
+    if (connectivity_manager_handle_encoder_event(event, value)) {
+        return;
+    }
+
+    edit_controller_on_encoder_event(event, value);
 }
 
 void update_startup_sequence(uint32_t now_ms) {
@@ -166,7 +178,7 @@ void app_logic_init() {
     }
     ec11_set_acceleration(false);
     ec11_set_long_press_threshold(900);
-    ec11_set_callback(edit_controller_on_encoder_event);
+    ec11_set_callback(on_encoder_event);
 
     edit_controller_init();
 
@@ -186,5 +198,6 @@ void app_logic_update() {
     const uint32_t now_ms = millis();
     update_power_key(now_ms);
     update_startup_sequence(now_ms);
+    connectivity_manager_update();
     edit_controller_update();
 }

@@ -79,6 +79,20 @@ bool sa818_set_offset(SA818Offset offset, uint32_t freq_khz);
 bool sa818_set_bandwidth(bool wide);
 bool sa818_get_bandwidth(void);
 
+// ==================== 批量配置（一次 AT 命令）====================
+
+struct SA818GroupConfig {
+    uint32_t tx_freq_khz;
+    uint32_t rx_freq_khz;
+    const char *tx_subaudio;  // e.g. "0000", "0008", "023N"
+    const char *rx_subaudio;
+    SA818Squelch squelch;
+    bool wide_band;
+};
+
+// 将所有配置写入驱动内部状态并发送一次 AT+DMOSETGROUP。
+bool sa818_apply_group(const SA818GroupConfig &config);
+
 // ==================== 状态查询 ====================
 
 bool sa818_get_version(char *buffer, size_t len);

@@ -1,0 +1,82 @@
+#ifndef DEVICE_CONFIG_H
+#define DEVICE_CONFIG_H
+
+#include <Arduino.h>
+
+#include <cstddef>
+#include <cstdint>
+
+namespace device_config {
+
+constexpr size_t WIFI_SSID_MAX_LEN = 32;
+constexpr size_t WIFI_PASSWORD_MAX_LEN = 64;
+constexpr size_t IPV4_TEXT_MAX_LEN = 15;
+constexpr size_t HOST_MAX_LEN = 63;
+constexpr size_t URL_MAX_LEN = 127;
+constexpr size_t ACCOUNT_MAX_LEN = 31;
+constexpr size_t PASSWORD_MAX_LEN = 63;
+constexpr size_t CALLSIGN_MAX_LEN = 15;
+
+enum class SubAudioType : uint8_t {
+    OFF = 0,
+    CTCSS = 1,
+    CDCSS_N = 2,
+};
+
+struct SubAudioSetting {
+    SubAudioType type;
+    uint8_t index;
+};
+
+struct WiFiConfig {
+    bool dhcp;
+    char ssid[WIFI_SSID_MAX_LEN + 1];
+    char password[WIFI_PASSWORD_MAX_LEN + 1];
+    char ip[IPV4_TEXT_MAX_LEN + 1];
+    char gateway[IPV4_TEXT_MAX_LEN + 1];
+    char subnet[IPV4_TEXT_MAX_LEN + 1];
+    char dns1[IPV4_TEXT_MAX_LEN + 1];
+    char dns2[IPV4_TEXT_MAX_LEN + 1];
+};
+
+struct RadioConfig {
+    uint32_t tx_frequency_x10000;
+    uint32_t rx_frequency_x10000;
+    SubAudioSetting tx_subaudio;
+    SubAudioSetting rx_subaudio;
+    uint8_t squelch;
+    bool wide_band;
+};
+
+struct ServerConfig {
+    char callsign[CALLSIGN_MAX_LEN + 1];
+    uint8_t node_ssid;
+    char udp_host[HOST_MAX_LEN + 1];
+    uint16_t udp_port;
+    char http_api_base_url[URL_MAX_LEN + 1];
+    char account[ACCOUNT_MAX_LEN + 1];
+    char device_auth_password[PASSWORD_MAX_LEN + 1];
+};
+
+struct DeviceConfig {
+    WiFiConfig wifi;
+    RadioConfig radio;
+    ServerConfig server;
+};
+
+void set_defaults(DeviceConfig &config);
+void set_defaults(WiFiConfig &config);
+void set_defaults(RadioConfig &config);
+void set_defaults(ServerConfig &config);
+
+bool load(DeviceConfig &config);
+bool save(const DeviceConfig &config);
+bool save_wifi(const WiFiConfig &config);
+bool save_radio(const RadioConfig &config);
+bool save_server(const ServerConfig &config);
+
+bool has_wifi_credentials(const WiFiConfig &config);
+
+} // namespace device_config
+
+#endif // DEVICE_CONFIG_H

@@ -390,6 +390,42 @@ bool sa818_get_bandwidth(void) {
     return is_wide_band;
 }
 
+bool sa818_apply_group(const SA818GroupConfig &config) {
+    // 校验频率范围
+    if (module_type == SA818Type::SA818_VHF) {
+        if (config.tx_freq_khz < 134000 || config.tx_freq_khz > 174000) return false;
+        if (config.rx_freq_khz < 134000 || config.rx_freq_khz > 174000) return false;
+    } else {
+        if (config.tx_freq_khz < 400000 || config.tx_freq_khz > 470000) return false;
+        if (config.rx_freq_khz < 400000 || config.rx_freq_khz > 470000) return false;
+    }
+
+    // 更新内部状态
+    tx_freq = config.tx_freq_khz;
+    rx_freq = config.rx_freq_khz;
+    is_wide_band = config.wide_band;
+    current_squelch = config.squelch;
+
+    const char *tx_sub = config.tx_subaudio ? config.tx_subaudio : "0000";
+    const char *rx_sub = config.rx_subaudio ? config.rx_subaudio : "0000";
+    strncpy(tx_subaudio, tx_sub, sizeof(tx_subaudio) - 1);
+    tx_subaudio[sizeof(tx_subaudio) - 1] = '\0';
+    strncpy(rx_subaudio, rx_sub, sizeof(rx_subaudio) - 1);
+    rx_subaudio[sizeof(rx_subaudio) - 1] = '\0';
+
+    char cmd[96];
+    char response[32];
+    snprintf(cmd, sizeof(cmd), "AT+DMOSETGROUP=%d,%.4f,%.4f,%s,%d,%s",
+             is_wide_band ? 1 : 0,
+             tx_freq / 1000.0,
+             rx_freq / 1000.0,
+             tx_subaudio,
+             static_cast<int>(current_squelch),
+             rx_subaudio);
+
+    return send_at_command(cmd, response, sizeof(response), SA818_GROUP_CMD_TIMEOUT_MS);
+}
+
 bool sa818_get_version(char *buffer, size_t len) {
     if (!buffer || len == 0) return false;
     return send_at_command("AT+VERSION", buffer, len, 200);

@@ -29,6 +29,7 @@ extern "C" {
 
 #include "ui_StartUP.h"
 #include "ui_main.h"
+#include "ui_SettingPAGE.h"
 
 ///////////////////// VARIABLES ////////////////////
 

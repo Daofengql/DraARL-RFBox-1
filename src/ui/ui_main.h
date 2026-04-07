@@ -21,6 +21,8 @@ extern lv_obj_t * ui_Freq;
 extern lv_obj_t * ui_TXCTCSS;
 extern lv_obj_t * ui_RXCTCSS;
 extern lv_obj_t * ui_CTCSSinfo;
+extern lv_obj_t * ui_SQLinfo;
+extern lv_obj_t * ui_RXSQL;
 extern lv_obj_t * ui_header;
 extern lv_obj_t * ui_logo;
 extern lv_obj_t * ui_time;

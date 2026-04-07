@@ -1,0 +1,843 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DraARL BLE Config</title>
+  <link rel="stylesheet" href="https://unpkg.com/mdui@2/mdui.css">
+  <script src="https://unpkg.com/mdui@2/mdui.global.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --mdui-color-primary: #0b84d8;
+      --mdui-color-on-primary: #ffffff;
+      --mdui-color-surface: #ffffff;
+      --mdui-color-on-surface: #142733;
+      --mdui-color-on-surface-variant: #46606f;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Roboto Flex", "Noto Sans SC", "Segoe UI", sans-serif;
+      color: var(--mdui-color-on-surface);
+      background:
+        radial-gradient(circle at top left, rgba(11, 132, 216, 0.14), transparent 32%),
+        radial-gradient(circle at right center, rgba(55, 171, 111, 0.12), transparent 24%),
+        linear-gradient(180deg, #f9fbfd 0%, #eef3f7 100%);
+    }
+
+    .page {
+      width: min(1220px, calc(100vw - 24px));
+      margin: 0 auto;
+      padding: 20px 0 36px;
+    }
+
+    .top-shell {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      padding-bottom: 18px;
+      backdrop-filter: blur(18px);
+    }
+
+    .hero-card,
+    .panel-card,
+    .log-card {
+      display: block;
+      border-radius: 28px;
+      overflow: hidden;
+      color: var(--mdui-color-on-surface);
+      box-shadow: 0 18px 44px rgba(16, 36, 52, 0.10);
+    }
+
+    .hero-card {
+      padding: 24px;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 252, 0.96)),
+        var(--mdui-color-surface);
+    }
+
+    .panel-card,
+    .log-card {
+      padding: 22px;
+      background: rgba(255, 255, 255, 0.96);
+    }
+
+    .hero-head,
+    .panel-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .eyebrow {
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--mdui-color-primary);
+    }
+
+    .hero-copy h1,
+    .panel-copy h2 {
+      margin: 0;
+    }
+
+    .hero-copy h1 {
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+    }
+
+    .hero-copy p,
+    .panel-copy p,
+    .helper-text {
+      margin: 0;
+      color: var(--mdui-color-on-surface-variant);
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.6;
+    }
+
+    .hero-actions,
+    .panel-actions,
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .auth-strip {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: minmax(160px, 220px) minmax(160px, 240px) auto auto;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 16px;
+      border-radius: 22px;
+      background: rgba(11, 132, 216, 0.08);
+      border: 1px solid rgba(11, 132, 216, 0.12);
+    }
+
+    .auth-copy strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--mdui-color-on-surface);
+    }
+
+    .auth-copy span {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--mdui-color-on-surface-variant);
+    }
+
+    .status-row {
+      margin-top: 18px;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      background: rgba(23, 48, 64, 0.08);
+      color: var(--mdui-color-on-surface);
+    }
+
+    .status-chip.ok {
+      background: rgba(30, 136, 99, 0.14);
+      color: #146c4e;
+    }
+
+    .status-chip.fail {
+      background: rgba(198, 40, 40, 0.14);
+      color: #b3261e;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 18px;
+    }
+
+    .panel-card {
+      display: grid;
+      gap: 16px;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+
+    .field-grid.tight {
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    }
+
+    .ssid-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(180px, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .mode-fields {
+      display: grid;
+      gap: 14px;
+    }
+
+    .locked {
+      opacity: 0.56;
+      pointer-events: none;
+      filter: grayscale(0.12);
+    }
+
+    .is-hidden {
+      display: none !important;
+    }
+
+    mdui-button {
+      font-weight: 700;
+    }
+
+    mdui-text-field,
+    mdui-select {
+      --mdui-color-on-surface: #142733;
+      --mdui-color-on-surface-variant: #46606f;
+      --mdui-color-primary: #0b84d8;
+      --mdui-color-outline: rgba(20, 39, 51, 0.18);
+    }
+
+    #log {
+      min-height: 180px;
+      padding: 16px;
+      border-radius: 20px;
+      overflow: auto;
+      white-space: pre-wrap;
+      line-height: 1.6;
+      font-family: "JetBrains Mono", "Cascadia Code", monospace;
+      font-size: 13px;
+      background: #0f1b24;
+      color: #d5ebfb;
+    }
+
+    @media (max-width: 900px) {
+      .auth-strip {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .auth-copy {
+        grid-column: 1 / -1;
+      }
+    }
+
+    @media (max-width: 700px) {
+      .page {
+        width: min(100vw - 16px, 100%);
+        padding-top: 12px;
+      }
+
+      .hero-card,
+      .panel-card,
+      .log-card {
+        border-radius: 22px;
+      }
+
+      .hero-card,
+      .panel-card,
+      .log-card {
+        padding: 18px;
+      }
+
+      .auth-strip,
+      .ssid-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="top-shell">
+      <mdui-card class="hero-card" variant="filled">
+        <div class="hero-head">
+          <div class="hero-copy">
+            <div class="eyebrow">BLE Provisioning</div>
+            <h1>DraARL 配置中心</h1>
+            <p>通过 Web Bluetooth 连接设备，输入屏幕上的动态码完成认证，然后下发 WiFi、SA818 和 DraARL 服务器配置。</p>
+          </div>
+          <div class="hero-actions">
+            <mdui-button id="connectBtn" variant="filled">扫描并连接设备</mdui-button>
+            <mdui-button id="disconnectBtn" variant="tonal">断开连接</mdui-button>
+            <mdui-button id="refreshBtn" variant="outlined">刷新状态</mdui-button>
+          </div>
+        </div>
+
+        <div class="auth-strip">
+          <div class="auth-copy">
+            <strong>认证</strong>
+            <span>输入设备屏幕显示的 6 位动态码，认证成功后即可读取和保存配置。</span>
+          </div>
+          <mdui-text-field id="authCode" label="动态码" placeholder="输入 6 位码" maxlength="6" inputmode="numeric"></mdui-text-field>
+          <mdui-button id="authBtn" variant="filled">提交认证</mdui-button>
+          <mdui-button id="loadConfigBtn" variant="outlined">读取配置</mdui-button>
+        </div>
+
+        <div class="status-row">
+          <div id="chipDevice" class="status-chip">设备: 未连接</div>
+          <div id="chipWifi" class="status-chip">WiFi: 未知</div>
+          <div id="chipBle" class="status-chip">BLE: 未知</div>
+          <div id="chipAuth" class="status-chip fail">认证: 未完成</div>
+        </div>
+      </mdui-card>
+    </header>
+
+    <main class="main-grid">
+      <mdui-card class="panel-card" id="wifiCard" variant="outlined">
+        <div class="panel-head">
+          <div class="panel-copy">
+            <h2>WiFi</h2>
+            <p>扫描后直接从下拉框选择 SSID，也可以切换到手动输入隐藏网络。</p>
+          </div>
+          <div class="panel-actions">
+            <mdui-button id="scanWifiBtn" variant="outlined">扫描附近 SSID</mdui-button>
+            <mdui-button id="saveWifiBtn" variant="filled">保存 WiFi 配置</mdui-button>
+          </div>
+        </div>
+
+        <div class="mode-fields">
+          <div class="ssid-row">
+            <mdui-select id="wifiSsidSelect" label="SSID">
+              <mdui-menu-item value="__manual__">手动输入</mdui-menu-item>
+            </mdui-select>
+            <mdui-text-field id="wifiSsidCustom" label="手动 SSID" placeholder="输入隐藏网络名称"></mdui-text-field>
+          </div>
+          <div id="wifiScanMeta" class="helper-text">点击“扫描附近 SSID”后，这里会显示网络列表。</div>
+          <div class="field-grid tight">
+            <mdui-text-field id="wifiPassword" type="password" label="密码" placeholder="WiFi 密码"></mdui-text-field>
+            <mdui-select id="wifiDhcp" label="网络模式">
+              <mdui-menu-item value="true">DHCP</mdui-menu-item>
+              <mdui-menu-item value="false">静态 IP</mdui-menu-item>
+            </mdui-select>
+          </div>
+          <div id="staticNetworkFields" class="field-grid">
+            <mdui-text-field id="wifiIp" label="IP" placeholder="192.168.1.50"></mdui-text-field>
+            <mdui-text-field id="wifiGateway" label="网关" placeholder="192.168.1.1"></mdui-text-field>
+            <mdui-text-field id="wifiSubnet" label="子网掩码" placeholder="255.255.255.0"></mdui-text-field>
+            <mdui-text-field id="wifiDns1" label="DNS1" placeholder="223.5.5.5"></mdui-text-field>
+            <mdui-text-field id="wifiDns2" label="DNS2" placeholder="8.8.8.8"></mdui-text-field>
+          </div>
+        </div>
+      </mdui-card>
+
+      <mdui-card class="panel-card" id="radioCard" variant="outlined">
+        <div class="panel-head">
+          <div class="panel-copy">
+            <h2>SA818</h2>
+            <p>设置收发频率、静噪和亚音参数。</p>
+          </div>
+          <div class="panel-actions">
+            <mdui-button id="saveRadioBtn" variant="filled">保存 SA818 配置</mdui-button>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <mdui-text-field id="txFreq" label="TX 频率 MHz" placeholder="439.5000"></mdui-text-field>
+          <mdui-text-field id="rxFreq" label="RX 频率 MHz" placeholder="438.5000"></mdui-text-field>
+          <mdui-select id="radioSql" label="SQL"></mdui-select>
+          <mdui-select id="radioBw" label="带宽">
+            <mdui-menu-item value="false">12.5K 窄带</mdui-menu-item>
+            <mdui-menu-item value="true">25K 宽带</mdui-menu-item>
+          </mdui-select>
+        </div>
+
+        <div class="field-grid">
+          <mdui-select id="txToneType" label="TX 亚音类型"></mdui-select>
+          <mdui-select id="txToneIndex" label="TX 亚音"></mdui-select>
+          <mdui-select id="rxToneType" label="RX 亚音类型"></mdui-select>
+          <mdui-select id="rxToneIndex" label="RX 亚音"></mdui-select>
+        </div>
+      </mdui-card>
+
+      <mdui-card class="panel-card" id="serverCard" variant="outlined">
+        <div class="panel-head">
+          <div class="panel-copy">
+            <h2>DraARL</h2>
+            <p>填写中继节点的网络与设备认证信息。</p>
+          </div>
+          <div class="panel-actions">
+            <mdui-button id="saveServerBtn" variant="filled">保存 DraARL 配置</mdui-button>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <mdui-text-field id="serverCallsign" label="Callsign" placeholder="BH5UVN"></mdui-text-field>
+          <mdui-text-field id="serverSsid" type="number" min="0" max="15" label="SSID" placeholder="0"></mdui-text-field>
+          <mdui-text-field id="serverUdpHost" label="UDP Host" placeholder="example.com"></mdui-text-field>
+          <mdui-text-field id="serverUdpPort" type="number" min="0" max="65535" label="UDP Port" placeholder="3000"></mdui-text-field>
+        </div>
+
+        <div class="field-grid">
+          <mdui-text-field id="serverHttpBase" label="HTTP API BaseURL" placeholder="https://api.example.com"></mdui-text-field>
+          <mdui-text-field id="serverAccount" label="账号" placeholder="account"></mdui-text-field>
+          <mdui-text-field id="serverDevicePassword" type="password" label="设备认证密码" placeholder="device password"></mdui-text-field>
+        </div>
+      </mdui-card>
+    </main>
+
+    <mdui-card class="log-card" variant="outlined" style="margin-top:18px;">
+      <div class="panel-copy" style="margin-bottom:14px;">
+        <h2>日志</h2>
+        <p>BLE 连接、认证与配置发送记录会显示在这里。</p>
+      </div>
+      <div id="log"></div>
+    </mdui-card>
+  </div>
+
+  <script>
+    const SERVICE_UUID = "6d22f67d-7287-4f4e-8548-b362f9b1f001";
+    const STATUS_UUID = "6d22f67d-7287-4f4e-8548-b362f9b1f002";
+    const AUTH_UUID = "6d22f67d-7287-4f4e-8548-b362f9b1f003";
+    const RPC_TX_UUID = "6d22f67d-7287-4f4e-8548-b362f9b1f004";
+    const RPC_RX_UUID = "6d22f67d-7287-4f4e-8548-b362f9b1f005";
+    const CHUNK_PAYLOAD = 19;
+    const CHUNK_START = 0x01;
+    const CHUNK_END = 0x02;
+    const MANUAL_SSID_VALUE = "__manual__";
+
+    const CTCSS = ["67.0","71.9","74.4","77.0","79.7","82.5","85.4","88.5","91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0","127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9","173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"];
+    const DCS = [23,25,26,31,32,43,47,51,54,65,71,72,73,74,114,115,116,125,131,132,134,143,152,155,156,162,165,172,174,205,223,226,243,244,245,251,261,263,265,271,306,311,315,331,343,346,351,364,365,371,411,412,413,423,431,432,445,464,465,466,503,506,516,532,546,565,606,612,624,627,631,632,654,662,664,703,712,723,731,732,734,743,754];
+
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const state = {
+      device: null,
+      server: null,
+      service: null,
+      statusChar: null,
+      authChar: null,
+      rpcTxChar: null,
+      rpcRxChar: null,
+      authenticated: false,
+      nextId: 1,
+      pending: new Map(),
+      rpcBuffer: "",
+      scannedNetworks: []
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    if (window.mdui?.setColorScheme) {
+      mdui.setColorScheme("#0b84d8");
+    }
+
+    function log(message) {
+      const stamp = new Date().toLocaleTimeString();
+      $("log").textContent = `[${stamp}] ${message}\n` + $("log").textContent;
+    }
+
+    function notify(message) {
+      if (window.mdui?.snackbar) {
+        mdui.snackbar({ message, closeable: true, placement: "top" });
+      } else {
+        alert(message);
+      }
+    }
+
+    function setChip(id, text, kind = "") {
+      const el = $(id);
+      el.textContent = text;
+      el.className = `status-chip ${kind}`.trim();
+    }
+
+    function setFieldValue(id, value) {
+      $(id).value = value ?? "";
+    }
+
+    function getFieldValue(id) {
+      return String($(id).value ?? "");
+    }
+
+    function setMenuOptions(id, items, selectedValue = null) {
+      const select = $(id);
+      const desired = selectedValue ?? getFieldValue(id);
+      select.innerHTML = "";
+
+      items.forEach(({ value, label, disabled }) => {
+        const option = document.createElement("mdui-menu-item");
+        option.value = String(value);
+        option.textContent = label;
+        if (disabled) option.disabled = true;
+        select.appendChild(option);
+      });
+
+      const fallback = items.length ? String(items[0].value) : "";
+      const hasDesired = items.some((item) => String(item.value) === String(desired));
+      select.value = hasDesired ? String(desired) : fallback;
+    }
+
+    function toggleLocked(locked) {
+      ["wifiCard", "radioCard", "serverCard"].forEach((id) => $(id).classList.toggle("locked", locked));
+      $("loadConfigBtn").disabled = locked;
+      setChip("chipAuth", `认证: ${locked ? "未完成" : "已通过"}`, locked ? "fail" : "ok");
+    }
+
+    function updateWifiModeFields() {
+      $("staticNetworkFields").classList.toggle("is-hidden", getFieldValue("wifiDhcp") === "true");
+    }
+
+    function updateSsidInputMode() {
+      const manual = getFieldValue("wifiSsidSelect") === MANUAL_SSID_VALUE;
+      $("wifiSsidCustom").classList.toggle("is-hidden", !manual);
+    }
+
+    function syncWifiSsid(ssid) {
+      const options = [...$("wifiSsidSelect").querySelectorAll("mdui-menu-item")].map((item) => item.value);
+      setFieldValue("wifiSsidCustom", ssid || "");
+      if (ssid && options.includes(ssid)) {
+        setFieldValue("wifiSsidSelect", ssid);
+      } else {
+        setFieldValue("wifiSsidSelect", MANUAL_SSID_VALUE);
+      }
+      updateSsidInputMode();
+    }
+
+    function initSelects() {
+      setMenuOptions("radioSql", Array.from({ length: 9 }, (_, index) => ({ label: String(index), value: String(index) })), "4");
+      const toneTypes = ["OFF", "CTCSS", "CDCSS_N"].map((value) => ({ label: value, value }));
+      setMenuOptions("txToneType", toneTypes, "OFF");
+      setMenuOptions("rxToneType", toneTypes, "OFF");
+      updateToneOptions("tx");
+      updateToneOptions("rx");
+      setFieldValue("wifiDhcp", "true");
+      updateWifiModeFields();
+      syncWifiSsid("");
+    }
+
+    function updateToneOptions(prefix) {
+      const type = getFieldValue(`${prefix}ToneType`);
+      const current = getFieldValue(`${prefix}ToneIndex`);
+      const items = type === "CTCSS"
+        ? CTCSS.map((label, index) => ({ label, value: String(index) }))
+        : type === "CDCSS_N"
+          ? DCS.map((value, index) => ({ label: `D${String(value).padStart(3, "0")}N`, value: String(index) }))
+          : [{ label: "OFF", value: "0" }];
+
+      setMenuOptions(`${prefix}ToneIndex`, items, current);
+    }
+
+    async function withBusy(id, fn) {
+      const button = $(id);
+      if (button) button.loading = true;
+      try {
+        return await fn();
+      } finally {
+        if (button) button.loading = false;
+      }
+    }
+
+    async function connectDevice() {
+      if (!navigator.bluetooth) throw new Error("当前浏览器不支持 Web Bluetooth");
+      state.device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }], optionalServices: [SERVICE_UUID] });
+      state.device.addEventListener("gattserverdisconnected", onDisconnected);
+      state.server = await state.device.gatt.connect();
+      state.service = await state.server.getPrimaryService(SERVICE_UUID);
+      state.statusChar = await state.service.getCharacteristic(STATUS_UUID);
+      state.authChar = await state.service.getCharacteristic(AUTH_UUID);
+      state.rpcTxChar = await state.service.getCharacteristic(RPC_TX_UUID);
+      state.rpcRxChar = await state.service.getCharacteristic(RPC_RX_UUID);
+      await state.statusChar.startNotifications();
+      await state.rpcRxChar.startNotifications();
+      state.statusChar.addEventListener("characteristicvaluechanged", handleStatusNotify);
+      state.rpcRxChar.addEventListener("characteristicvaluechanged", handleRpcNotify);
+      setChip("chipDevice", `设备: ${state.device.name || "Unknown"}`);
+      log(`已连接到 ${state.device.name || "Unknown"}`);
+      await refreshStatus();
+    }
+
+    function onDisconnected() {
+      log("设备已断开连接");
+      state.authenticated = false;
+      state.pending.forEach(({ reject }) => reject(new Error("设备已断开连接")));
+      state.pending.clear();
+      setChip("chipDevice", "设备: 未连接");
+      setChip("chipWifi", "WiFi: 未知");
+      setChip("chipBle", "BLE: 未知");
+      toggleLocked(true);
+    }
+
+    function parseStatus(text) {
+      text = (text || "").replace(/\0/g, "").trim();
+      const parts = Object.fromEntries(text.split(";").map((entry) => [entry[0], entry.slice(1)]));
+      const wifiMap = { "0": "Idle", "1": "No Config", "2": "Connecting", "3": "Connected", "4": "Failed" };
+      const bleMap = { "0": "Disabled", "1": "Advertising", "2": "Connected" };
+      const authenticated = parts.a === "1";
+      state.authenticated = authenticated;
+      setChip("chipWifi", `WiFi: ${wifiMap[parts.w] || "Unknown"}${parts.r ? ` (${parts.r} dBm)` : ""}`, parts.w === "3" ? "ok" : (parts.w === "4" ? "fail" : ""));
+      setChip("chipBle", `BLE: ${bleMap[parts.b] || "Unknown"}`, parts.b === "2" ? "ok" : "");
+      toggleLocked(!authenticated);
+    }
+
+    function decodeDataView(view) {
+      return decoder.decode(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+    }
+
+    function handleStatusNotify(event) {
+      parseStatus(decodeDataView(event.target.value));
+    }
+
+    function handleRpcNotify(event) {
+      const bytes = new Uint8Array(
+        event.target.value.buffer,
+        event.target.value.byteOffset,
+        event.target.value.byteLength
+      );
+      const flags = bytes[0];
+      if (flags & CHUNK_START) state.rpcBuffer = "";
+      state.rpcBuffer += decoder.decode(bytes.slice(1), { stream: !(flags & CHUNK_END) });
+      if (flags & CHUNK_END) {
+        const payload = JSON.parse(state.rpcBuffer);
+        state.rpcBuffer = "";
+        const pending = state.pending.get(payload.id);
+        if (!pending) return;
+        state.pending.delete(payload.id);
+        payload.ok ? pending.resolve(payload.data || {}) : pending.reject(new Error(payload.error || "未知错误"));
+      }
+    }
+
+    async function refreshStatus() {
+      if (!state.statusChar) return;
+      const value = await state.statusChar.readValue();
+      parseStatus(decodeDataView(value));
+    }
+
+    async function readAuthState() {
+      if (!state.authChar) return "";
+      const value = await state.authChar.readValue();
+      return decodeDataView(value).replace(/\0/g, "").trim();
+    }
+
+    async function waitForAuthentication(timeoutMs = 3000, intervalMs = 150) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        await refreshStatus();
+        if (state.authenticated) return true;
+
+        const authState = await readAuthState();
+        if (authState === "ERR") return false;
+
+        if (authState === "OK") {
+          try {
+            const status = await sendRpc("get_status");
+            if (status?.authenticated) {
+              state.authenticated = true;
+              toggleLocked(false);
+              return true;
+            }
+          } catch (_) {}
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+      return state.authenticated;
+    }
+
+    async function sendRpc(cmd, data = {}) {
+      const id = state.nextId++;
+      const text = JSON.stringify({ id, cmd, data });
+      const bytes = encoder.encode(text);
+      const promise = new Promise((resolve, reject) => state.pending.set(id, { resolve, reject }));
+      for (let offset = 0; offset < bytes.length; offset += CHUNK_PAYLOAD) {
+        const chunk = bytes.slice(offset, offset + CHUNK_PAYLOAD);
+        const frame = new Uint8Array(chunk.length + 1);
+        frame[0] = (offset === 0 ? CHUNK_START : 0) | (offset + CHUNK_PAYLOAD >= bytes.length ? CHUNK_END : 0);
+        frame.set(chunk, 1);
+        await state.rpcTxChar.writeValue(frame);
+      }
+      return promise;
+    }
+
+    function fillWifi(data) {
+      syncWifiSsid(data.ssid || "");
+      setFieldValue("wifiPassword", data.password || "");
+      setFieldValue("wifiDhcp", String(data.dhcp !== false));
+      setFieldValue("wifiIp", data.ip || "");
+      setFieldValue("wifiGateway", data.gateway || "");
+      setFieldValue("wifiSubnet", data.subnet || "");
+      setFieldValue("wifiDns1", data.dns1 || "");
+      setFieldValue("wifiDns2", data.dns2 || "");
+      updateWifiModeFields();
+    }
+
+    function fillRadio(data) {
+      setFieldValue("txFreq", data.tx_frequency_mhz || "");
+      setFieldValue("rxFreq", data.rx_frequency_mhz || "");
+      setFieldValue("radioSql", String(data.squelch ?? 4));
+      setFieldValue("radioBw", String(Boolean(data.wide_band)));
+      setFieldValue("txToneType", data.tx_tone_type || "OFF");
+      setFieldValue("rxToneType", data.rx_tone_type || "OFF");
+      updateToneOptions("tx");
+      updateToneOptions("rx");
+      setFieldValue("txToneIndex", String(data.tx_tone_index ?? 0));
+      setFieldValue("rxToneIndex", String(data.rx_tone_index ?? 0));
+    }
+
+    function fillServer(data) {
+      setFieldValue("serverCallsign", data.callsign || "");
+      setFieldValue("serverSsid", data.node_ssid ?? 0);
+      setFieldValue("serverUdpHost", data.udp_host || "");
+      setFieldValue("serverUdpPort", data.udp_port || "");
+      setFieldValue("serverHttpBase", data.http_api_base_url || "");
+      setFieldValue("serverAccount", data.account || "");
+      setFieldValue("serverDevicePassword", data.device_auth_password || "");
+    }
+
+    function renderSsidOptions(networks) {
+      state.scannedNetworks = (networks || []).filter((item) => item.ssid);
+      const currentSsid = resolveWifiSsid();
+      const options = [{ label: "手动输入", value: MANUAL_SSID_VALUE }];
+
+      state.scannedNetworks.forEach((item) => {
+        const secureLabel = item.auth === 0 ? "开放" : "加密";
+        options.push({
+          value: item.ssid,
+          label: `${item.ssid} · ${item.rssi} dBm · ${secureLabel}`
+        });
+      });
+
+      setMenuOptions("wifiSsidSelect", options, currentSsid);
+      syncWifiSsid(currentSsid);
+
+      if (state.scannedNetworks.length) {
+        $("wifiScanMeta").textContent = `已扫描到 ${state.scannedNetworks.length} 个可见网络，隐藏 SSID 可切换到手动输入。`;
+      } else {
+        $("wifiScanMeta").textContent = "未发现可见网络，可切换到手动输入隐藏 SSID。";
+      }
+    }
+
+    async function loadConfig() {
+      const data = await sendRpc("get_config");
+      fillWifi(data.wifi || {});
+      fillRadio(data.radio || {});
+      fillServer(data.server || {});
+      log("配置已载入");
+    }
+
+    async function authDevice() {
+      const code = getFieldValue("authCode").trim();
+      if (!code) throw new Error("请输入动态码");
+      await state.authChar.writeValue(encoder.encode(code));
+      const ok = await waitForAuthentication();
+      if (!ok) throw new Error("动态码认证失败");
+      await loadConfig();
+      log("认证成功");
+    }
+
+    function resolveWifiSsid() {
+      return getFieldValue("wifiSsidSelect") === MANUAL_SSID_VALUE
+        ? getFieldValue("wifiSsidCustom").trim()
+        : getFieldValue("wifiSsidSelect").trim();
+    }
+
+    function currentWifiPayload() {
+      return {
+        ssid: resolveWifiSsid(),
+        password: getFieldValue("wifiPassword"),
+        dhcp: getFieldValue("wifiDhcp") === "true",
+        ip: getFieldValue("wifiIp").trim(),
+        gateway: getFieldValue("wifiGateway").trim(),
+        subnet: getFieldValue("wifiSubnet").trim(),
+        dns1: getFieldValue("wifiDns1").trim(),
+        dns2: getFieldValue("wifiDns2").trim()
+      };
+    }
+
+    function currentRadioPayload() {
+      return {
+        tx_frequency_mhz: getFieldValue("txFreq").trim(),
+        rx_frequency_mhz: getFieldValue("rxFreq").trim(),
+        tx_tone_type: getFieldValue("txToneType"),
+        tx_tone_index: Number(getFieldValue("txToneIndex")),
+        rx_tone_type: getFieldValue("rxToneType"),
+        rx_tone_index: Number(getFieldValue("rxToneIndex")),
+        squelch: Number(getFieldValue("radioSql")),
+        wide_band: getFieldValue("radioBw") === "true"
+      };
+    }
+
+    function currentServerPayload() {
+      return {
+        callsign: getFieldValue("serverCallsign").trim(),
+        node_ssid: Number(getFieldValue("serverSsid") || 0),
+        udp_host: getFieldValue("serverUdpHost").trim(),
+        udp_port: Number(getFieldValue("serverUdpPort") || 0),
+        http_api_base_url: getFieldValue("serverHttpBase").trim(),
+        account: getFieldValue("serverAccount").trim(),
+        device_auth_password: getFieldValue("serverDevicePassword")
+      };
+    }
+
+    async function safeRun(label, fn) {
+      try {
+        await fn();
+      } catch (error) {
+        log(`${label}失败: ${error.message}`);
+        notify(`${label}失败: ${error.message}`);
+      }
+    }
+
+    initSelects();
+    toggleLocked(true);
+
+    $("wifiDhcp").addEventListener("change", updateWifiModeFields);
+    $("wifiSsidSelect").addEventListener("change", updateSsidInputMode);
+    $("txToneType").addEventListener("change", () => updateToneOptions("tx"));
+    $("rxToneType").addEventListener("change", () => updateToneOptions("rx"));
+
+    $("connectBtn").addEventListener("click", () => safeRun("连接设备", () => withBusy("connectBtn", connectDevice)));
+    $("refreshBtn").addEventListener("click", () => safeRun("刷新状态", () => withBusy("refreshBtn", refreshStatus)));
+    $("authBtn").addEventListener("click", () => safeRun("认证设备", () => withBusy("authBtn", authDevice)));
+    $("loadConfigBtn").addEventListener("click", () => safeRun("读取配置", () => withBusy("loadConfigBtn", loadConfig)));
+    $("scanWifiBtn").addEventListener("click", () => safeRun("扫描 WiFi", () => withBusy("scanWifiBtn", async () => {
+      const result = await sendRpc("scan_wifi");
+      renderSsidOptions(result.networks || []);
+      log("WiFi 扫描完成");
+    })));
+    $("saveWifiBtn").addEventListener("click", () => safeRun("保存 WiFi", () => withBusy("saveWifiBtn", async () => {
+      await sendRpc("set_wifi", currentWifiPayload());
+      log("WiFi 配置已发送");
+    })));
+    $("saveRadioBtn").addEventListener("click", () => safeRun("保存 SA818", () => withBusy("saveRadioBtn", async () => {
+      await sendRpc("set_radio", currentRadioPayload());
+      log("SA818 配置已发送");
+    })));
+    $("saveServerBtn").addEventListener("click", () => safeRun("保存 DraARL", () => withBusy("saveServerBtn", async () => {
+      await sendRpc("set_server", currentServerPayload());
+      log("DraARL 配置已发送");
+    })));
+    $("disconnectBtn").addEventListener("click", () => safeRun("断开连接", () => withBusy("disconnectBtn", async () => {
+      if (state.rpcTxChar && state.authenticated) {
+        try { await sendRpc("disconnect"); } catch (_) {}
+      }
+      if (state.device?.gatt?.connected) state.device.gatt.disconnect();
+    })));
+  </script>
+</body>
+</html>

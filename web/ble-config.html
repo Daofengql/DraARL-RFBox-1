@@ -420,6 +420,8 @@
     const CHUNK_PAYLOAD = 19;
     const CHUNK_START = 0x01;
     const CHUNK_END = 0x02;
+    const RPC_TIMEOUT_MS = 12000;
+    const STATUS_POLL_INTERVAL_MS = 2000;
     const MANUAL_SSID_VALUE = "__manual__";
 
     const CTCSS = ["67.0","71.9","74.4","77.0","79.7","82.5","85.4","88.5","91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0","127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9","173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"];
@@ -439,7 +441,8 @@
       nextId: 1,
       pending: new Map(),
       rpcBuffer: "",
-      scannedNetworks: []
+      scannedNetworks: [],
+      statusPollTimer: null
     };
 
     const $ = (id) => document.getElementById(id);
@@ -453,11 +456,22 @@
       $("log").textContent = `[${stamp}] ${message}\n` + $("log").textContent;
     }
 
+    if (location.protocol === "file:") {
+      log("检测到当前页面以 file:// 打开。部分浏览器会把本地文件视为独立安全域，可能触发资源或 BLE 相关限制；建议改用本地 HTTP 服务访问此页面。");
+    }
+
     function notify(message) {
       if (window.mdui?.snackbar) {
         mdui.snackbar({ message, closeable: true, placement: "top" });
       } else {
         alert(message);
+      }
+    }
+
+    function rejectAllPending(error) {
+      for (const [id, pending] of state.pending.entries()) {
+        state.pending.delete(id);
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
       }
     }
 
@@ -555,6 +569,10 @@
 
     async function connectDevice() {
       if (!navigator.bluetooth) throw new Error("当前浏览器不支持 Web Bluetooth");
+      if (state.statusPollTimer) {
+        clearInterval(state.statusPollTimer);
+        state.statusPollTimer = null;
+      }
       state.device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }], optionalServices: [SERVICE_UUID] });
       state.device.addEventListener("gattserverdisconnected", onDisconnected);
       state.server = await state.device.gatt.connect();
@@ -570,6 +588,9 @@
       setChip("chipDevice", `设备: ${state.device.name || "Unknown"}`);
       log(`已连接到 ${state.device.name || "Unknown"}`);
       await refreshStatus();
+      state.statusPollTimer = setInterval(() => {
+        refreshStatus().catch(() => {});
+      }, STATUS_POLL_INTERVAL_MS);
     }
 
     function onDisconnected() {
@@ -577,6 +598,10 @@
       state.authenticated = false;
       state.pending.forEach(({ reject }) => reject(new Error("设备已断开连接")));
       state.pending.clear();
+      if (state.statusPollTimer) {
+        clearInterval(state.statusPollTimer);
+        state.statusPollTimer = null;
+      }
       setChip("chipDevice", "设备: 未连接");
       setChip("chipWifi", "WiFi: 未知");
       setChip("chipBle", "BLE: 未知");
@@ -585,14 +610,54 @@
 
     function parseStatus(text) {
       text = (text || "").replace(/\0/g, "").trim();
-      const parts = Object.fromEntries(text.split(";").map((entry) => [entry[0], entry.slice(1)]));
+      if (!text) return false;
+      const parts = {};
+      text.split(";").forEach((entry) => {
+        if (!entry || entry.length < 2) return;
+        parts[entry[0]] = entry.slice(1);
+      });
+      if (parts.w === undefined && parts.b === undefined && parts.a === undefined) return false;
+
       const wifiMap = { "0": "Idle", "1": "No Config", "2": "Connecting", "3": "Connected", "4": "Failed" };
       const bleMap = { "0": "Disabled", "1": "Advertising", "2": "Connected" };
       const authenticated = parts.a === "1";
       state.authenticated = authenticated;
-      setChip("chipWifi", `WiFi: ${wifiMap[parts.w] || "Unknown"}${parts.r ? ` (${parts.r} dBm)` : ""}`, parts.w === "3" ? "ok" : (parts.w === "4" ? "fail" : ""));
-      setChip("chipBle", `BLE: ${bleMap[parts.b] || "Unknown"}`, parts.b === "2" ? "ok" : "");
+      if (parts.w !== undefined) {
+        setChip("chipWifi", `WiFi: ${wifiMap[parts.w] || "Unknown"}${parts.r ? ` (${parts.r} dBm)` : ""}`, parts.w === "3" ? "ok" : (parts.w === "4" ? "fail" : ""));
+      }
+      if (parts.b !== undefined) {
+        setChip("chipBle", `BLE: ${bleMap[parts.b] || "Unknown"}`, parts.b === "2" ? "ok" : "");
+      }
       toggleLocked(!authenticated);
+      return true;
+    }
+
+    function applyStatusFromRpc(status) {
+      if (!status || typeof status !== "object") return;
+
+      const wifiStateMap = {
+        "idle": "Idle",
+        "no-config": "No Config",
+        "connecting": "Connecting",
+        "connected": "Connected",
+        "failed": "Failed"
+      };
+      const bleStateMap = { 0: "Disabled", 1: "Advertising", 2: "Connected" };
+      const wifiState = String(status.wifi_state || "idle");
+      const bleState = Number(status.ble_state ?? 0);
+      const rssi = status.rssi;
+
+      setChip(
+        "chipWifi",
+        `WiFi: ${wifiStateMap[wifiState] || "Unknown"}${Number.isFinite(rssi) ? ` (${rssi} dBm)` : ""}`,
+        wifiState === "connected" ? "ok" : (wifiState === "failed" ? "fail" : "")
+      );
+      setChip("chipBle", `BLE: ${bleStateMap[bleState] || "Unknown"}`, bleState === 2 ? "ok" : "");
+
+      if (typeof status.authenticated === "boolean") {
+        state.authenticated = status.authenticated;
+        toggleLocked(!state.authenticated);
+      }
     }
 
     function decodeDataView(view) {
@@ -613,8 +678,18 @@
       if (flags & CHUNK_START) state.rpcBuffer = "";
       state.rpcBuffer += decoder.decode(bytes.slice(1), { stream: !(flags & CHUNK_END) });
       if (flags & CHUNK_END) {
-        const payload = JSON.parse(state.rpcBuffer);
+        const rawPayload = state.rpcBuffer;
         state.rpcBuffer = "";
+        let payload;
+        try {
+          payload = JSON.parse(rawPayload);
+        } catch (error) {
+          const preview = rawPayload.length > 220 ? `${rawPayload.slice(0, 220)}...` : rawPayload;
+          console.error("Invalid RPC JSON:", rawPayload, error);
+          log(`设备返回了非法 JSON，前 220 字符: ${preview}`);
+          rejectAllPending(new Error("设备返回了非法 JSON，请检查设备端配置内容是否超长或包含异常数据"));
+          return;
+        }
         const pending = state.pending.get(payload.id);
         if (!pending) return;
         state.pending.delete(payload.id);
@@ -622,10 +697,23 @@
       }
     }
 
-    async function refreshStatus() {
-      if (!state.statusChar) return;
-      const value = await state.statusChar.readValue();
-      parseStatus(decodeDataView(value));
+    async function refreshStatus(useRpcFallback = true) {
+      let updated = false;
+      if (state.statusChar) {
+        try {
+          const value = await state.statusChar.readValue();
+          updated = parseStatus(decodeDataView(value));
+        } catch (_) {}
+      }
+
+      if (!useRpcFallback || !state.rpcTxChar || !state.rpcRxChar) return;
+
+      if (!updated || state.device?.gatt?.connected) {
+        try {
+          const status = await sendRpc("get_status", {}, 3000);
+          applyStatusFromRpc(status);
+        } catch (_) {}
+      }
     }
 
     async function readAuthState() {
@@ -637,7 +725,7 @@
     async function waitForAuthentication(timeoutMs = 3000, intervalMs = 150) {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
-        await refreshStatus();
+        await refreshStatus(false);
         if (state.authenticated) return true;
 
         const authState = await readAuthState();
@@ -646,6 +734,7 @@
         if (authState === "OK") {
           try {
             const status = await sendRpc("get_status");
+            applyStatusFromRpc(status);
             if (status?.authenticated) {
               state.authenticated = true;
               toggleLocked(false);
@@ -659,17 +748,45 @@
       return state.authenticated;
     }
 
-    async function sendRpc(cmd, data = {}) {
+    async function sendRpc(cmd, data = {}, timeoutMs = RPC_TIMEOUT_MS) {
+      if (!state.rpcTxChar || !state.rpcRxChar) throw new Error("RPC 通道未就绪");
+      if (!state.device?.gatt?.connected) throw new Error("设备未连接");
+
       const id = state.nextId++;
       const text = JSON.stringify({ id, cmd, data });
       const bytes = encoder.encode(text);
-      const promise = new Promise((resolve, reject) => state.pending.set(id, { resolve, reject }));
+      let timeoutHandle = null;
+      const promise = new Promise((resolve, reject) => {
+        timeoutHandle = setTimeout(() => {
+          if (!state.pending.has(id)) return;
+          state.pending.delete(id);
+          reject(new Error(`RPC 超时: ${cmd}`));
+        }, timeoutMs);
+
+        state.pending.set(id, {
+          resolve: (payload) => {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            resolve(payload);
+          },
+          reject: (error) => {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            reject(error);
+          }
+        });
+      });
+
       for (let offset = 0; offset < bytes.length; offset += CHUNK_PAYLOAD) {
         const chunk = bytes.slice(offset, offset + CHUNK_PAYLOAD);
         const frame = new Uint8Array(chunk.length + 1);
         frame[0] = (offset === 0 ? CHUNK_START : 0) | (offset + CHUNK_PAYLOAD >= bytes.length ? CHUNK_END : 0);
         frame.set(chunk, 1);
-        await state.rpcTxChar.writeValue(frame);
+        try {
+          await state.rpcTxChar.writeValue(frame);
+        } catch (error) {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          if (state.pending.has(id)) state.pending.delete(id);
+          throw error;
+        }
       }
       return promise;
     }
@@ -816,9 +933,15 @@
     $("authBtn").addEventListener("click", () => safeRun("认证设备", () => withBusy("authBtn", authDevice)));
     $("loadConfigBtn").addEventListener("click", () => safeRun("读取配置", () => withBusy("loadConfigBtn", loadConfig)));
     $("scanWifiBtn").addEventListener("click", () => safeRun("扫描 WiFi", () => withBusy("scanWifiBtn", async () => {
-      const result = await sendRpc("scan_wifi");
+      const result = await sendRpc("scan_wifi", {}, 6000);
       renderSsidOptions(result.networks || []);
-      log("WiFi 扫描完成");
+      if (result.partial) {
+        const count = Array.isArray(result.networks) ? result.networks.length : 0;
+        const suffix = result.scan_in_progress ? "，后台继续扫描中" : "";
+        log(`WiFi 扫描未完成，已返回 ${count} 个可用结果${suffix}`);
+      } else {
+        log("WiFi 扫描完成");
+      }
     })));
     $("saveWifiBtn").addEventListener("click", () => safeRun("保存 WiFi", () => withBusy("saveWifiBtn", async () => {
       await sendRpc("set_wifi", currentWifiPayload());

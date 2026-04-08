@@ -11,6 +11,18 @@ constexpr char DEFAULT_SERVER_UDP_HOST[] = "ptt.4l2.cn";
 constexpr uint16_t DEFAULT_SERVER_UDP_PORT = 60050;
 constexpr char DEFAULT_SERVER_HTTP_API_BASE_URL[] = "https://ptt.4l2.cn/";
 
+template <size_t N>
+void copy_cstr(char (&dest)[N], const char *src) {
+    if (N == 0) return;
+    if (!src) {
+        dest[0] = '\0';
+        return;
+    }
+
+    strncpy(dest, src, N - 1);
+    dest[N - 1] = '\0';
+}
+
 void load_optional_string(Preferences &prefs, const char *key, char *buffer, size_t buffer_len) {
     if (!buffer || buffer_len == 0) {
         return;
@@ -66,13 +78,13 @@ void sanitize_server_config(ServerConfig &config) {
     }
 
     if (config.udp_host[0] == '\0') {
-        strncpy(config.udp_host, DEFAULT_SERVER_UDP_HOST, sizeof(config.udp_host) - 1);
+        copy_cstr(config.udp_host, DEFAULT_SERVER_UDP_HOST);
     }
     if (config.udp_port == 0) {
         config.udp_port = DEFAULT_SERVER_UDP_PORT;
     }
     if (config.http_api_base_url[0] == '\0') {
-        strncpy(config.http_api_base_url, DEFAULT_SERVER_HTTP_API_BASE_URL, sizeof(config.http_api_base_url) - 1);
+        copy_cstr(config.http_api_base_url, DEFAULT_SERVER_HTTP_API_BASE_URL);
     }
 }
 
@@ -139,9 +151,9 @@ void set_defaults(RadioConfig &config) {
 void set_defaults(ServerConfig &config) {
     memset(&config, 0, sizeof(config));
     config.node_ssid = 0;
-    strncpy(config.udp_host, DEFAULT_SERVER_UDP_HOST, sizeof(config.udp_host) - 1);
+    copy_cstr(config.udp_host, DEFAULT_SERVER_UDP_HOST);
     config.udp_port = DEFAULT_SERVER_UDP_PORT;
-    strncpy(config.http_api_base_url, DEFAULT_SERVER_HTTP_API_BASE_URL, sizeof(config.http_api_base_url) - 1);
+    copy_cstr(config.http_api_base_url, DEFAULT_SERVER_HTTP_API_BASE_URL);
 }
 
 bool load(DeviceConfig &config) {

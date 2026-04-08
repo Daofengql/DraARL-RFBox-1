@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <NimBLEDevice.h>
 #include <WiFi.h>
+#include <esp_heap_caps.h>
 #include <lvgl.h>
 
 #include <algorithm>
@@ -24,6 +25,12 @@ constexpr uint8_t WIFI_BOOT_FAILURE_LIMIT = 3;
 constexpr uint32_t BLE_IDLE_TIMEOUT_MS = 10 * 60 * 1000UL;
 constexpr uint8_t BLE_AUTH_CODE_LEN = 6;
 constexpr size_t BLE_RPC_CHUNK_PAYLOAD = 19;
+constexpr uint32_t MEM_LOG_INTERVAL_MS = 5000;
+constexpr uint32_t WIFI_SCAN_WAIT_BUDGET_MS = 3000;
+constexpr uint32_t WIFI_SCAN_POLL_INTERVAL_MS = 120;
+constexpr uint8_t WIFI_SCAN_CACHE_MAX = 32;
+constexpr int WIFI_SCAN_STATUS_RUNNING = -1;
+constexpr int WIFI_SCAN_STATUS_FAILED = -2;
 
 constexpr char BLE_SERVICE_UUID[] = "6d22f67d-7287-4f4e-8548-b362f9b1f001";
 constexpr char BLE_STATUS_UUID[] = "6d22f67d-7287-4f4e-8548-b362f9b1f002";
@@ -55,11 +62,24 @@ bool g_main_screen_ready = false;
 bool g_wifi_attempt_active = false;
 bool g_wifi_manual_disconnect = false;
 bool g_wifi_connected_once = false;
+bool g_wifi_retry_suspended = false;
 uint8_t g_wifi_boot_failures = 0;
 uint32_t g_wifi_attempt_started_at_ms = 0;
 uint32_t g_wifi_next_retry_at_ms = 0;
+uint32_t g_last_mem_log_at_ms = 0;
 WiFiState g_wifi_state = WiFiState::UNINITIALIZED;
 int32_t g_wifi_rssi = 0;
+
+struct WiFiScanCacheEntry {
+    char ssid[33];
+    int32_t rssi;
+    int32_t auth;
+};
+
+WiFiScanCacheEntry g_wifi_scan_cache[WIFI_SCAN_CACHE_MAX] = {};
+uint8_t g_wifi_scan_cache_count = 0;
+uint32_t g_wifi_scan_cache_updated_at_ms = 0;
+bool g_wifi_scan_in_progress = false;
 
 bool g_ble_stack_initialized = false;
 bool g_ble_enabled = false;
@@ -104,6 +124,18 @@ const char *wifi_state_label(WiFiState state) {
         case WiFiState::UNINITIALIZED:
         default:                     return "idle";
     }
+}
+
+template <size_t N>
+void copy_cstr(char (&dest)[N], const char *src) {
+    if (N == 0) return;
+    if (!src) {
+        dest[0] = '\0';
+        return;
+    }
+
+    strncpy(dest, src, N - 1);
+    dest[N - 1] = '\0';
 }
 
 BleState current_ble_state() {
@@ -231,13 +263,11 @@ void notify_status() {
 
     String payload = build_status_payload();
     g_ble_status_char->setValue(payload.c_str());
-    if (g_ble_transport_connected) {
-        g_ble_status_char->notify();
-    }
+    g_ble_status_char->notify();
 }
 
 void notify_rpc_json(const String &json) {
-    if (!g_ble_rpc_rx_char || !g_ble_transport_connected) return;
+    if (!g_ble_rpc_rx_char) return;
 
     const size_t total_len = json.length();
     const char *raw = json.c_str();
@@ -351,6 +381,8 @@ void disable_ble();
 void maybe_start_ble_for_boot_failure(const char *reason);
 void handle_wifi_attempt_failure(const char *reason);
 void on_wifi_event(arduino_event_id_t event);
+void suspend_wifi_retry_for_ble_provisioning();
+void log_sram_usage();
 
 void begin_wifi_connect_attempt(bool reset_failures) {
     if (!g_main_screen_ready) return;
@@ -365,6 +397,10 @@ void begin_wifi_connect_attempt(bool reset_failures) {
     if (reset_failures) {
         g_wifi_boot_failures = 0;
         g_wifi_connected_once = false;
+        g_wifi_retry_suspended = false;
+    } else if (g_wifi_retry_suspended) {
+        // BLE provisioning fallback is active, suppress background Wi-Fi churn.
+        return;
     }
 
     if (!apply_wifi_network_config()) {
@@ -426,6 +462,9 @@ public:
     void onWrite(BLECharacteristic *characteristic) override {
         if (!characteristic) return;
 
+        // Receiving writes proves an active link, even if connect event was delayed.
+        g_ble_transport_connected = true;
+
         const std::string value = characteristic->getValue();
         String code(value.c_str());
         code.trim();
@@ -446,6 +485,9 @@ class RpcTxCharacteristicCallbacks final : public BLECharacteristicCallbacks {
 public:
     void onWrite(BLECharacteristic *characteristic) override {
         if (!characteristic) return;
+
+        // Keep transport state in sync to avoid dropping RPC responses.
+        g_ble_transport_connected = true;
 
         const std::string value = characteristic->getValue();
         if (value.empty()) return;
@@ -515,14 +557,14 @@ void add_config_to_response(JsonObject root) {
 
 bool parse_wifi_config(JsonObjectConst input, device_config::WiFiConfig &config, String &error) {
     device_config::set_defaults(config);
-    strncpy(config.ssid, input["ssid"] | "", sizeof(config.ssid) - 1);
-    strncpy(config.password, input["password"] | "", sizeof(config.password) - 1);
+    copy_cstr(config.ssid, input["ssid"] | "");
+    copy_cstr(config.password, input["password"] | "");
     config.dhcp = input["dhcp"] | true;
-    strncpy(config.ip, input["ip"] | "", sizeof(config.ip) - 1);
-    strncpy(config.gateway, input["gateway"] | "", sizeof(config.gateway) - 1);
-    strncpy(config.subnet, input["subnet"] | "", sizeof(config.subnet) - 1);
-    strncpy(config.dns1, input["dns1"] | "", sizeof(config.dns1) - 1);
-    strncpy(config.dns2, input["dns2"] | "", sizeof(config.dns2) - 1);
+    copy_cstr(config.ip, input["ip"] | "");
+    copy_cstr(config.gateway, input["gateway"] | "");
+    copy_cstr(config.subnet, input["subnet"] | "");
+    copy_cstr(config.dns1, input["dns1"] | "");
+    copy_cstr(config.dns2, input["dns2"] | "");
 
     if (config.ssid[0] == '\0') {
         error = "WiFi SSID required";
@@ -568,11 +610,11 @@ bool parse_radio_config(JsonObjectConst input, device_config::RadioConfig &confi
 
 bool parse_server_config(JsonObjectConst input, device_config::ServerConfig &config, String &error) {
     device_config::set_defaults(config);
-    strncpy(config.callsign, input["callsign"] | "", sizeof(config.callsign) - 1);
+    copy_cstr(config.callsign, input["callsign"] | "");
     config.node_ssid = input["node_ssid"] | 0;
     const char *udp_host = input["udp_host"] | "";
     if (udp_host[0] != '\0') {
-        strncpy(config.udp_host, udp_host, sizeof(config.udp_host) - 1);
+        copy_cstr(config.udp_host, udp_host);
     }
     const uint16_t udp_port = input["udp_port"] | 0;
     if (udp_port != 0) {
@@ -580,10 +622,10 @@ bool parse_server_config(JsonObjectConst input, device_config::ServerConfig &con
     }
     const char *http_api_base_url = input["http_api_base_url"] | "";
     if (http_api_base_url[0] != '\0') {
-        strncpy(config.http_api_base_url, http_api_base_url, sizeof(config.http_api_base_url) - 1);
+        copy_cstr(config.http_api_base_url, http_api_base_url);
     }
-    strncpy(config.account, input["account"] | "", sizeof(config.account) - 1);
-    strncpy(config.device_auth_password, input["device_auth_password"] | "", sizeof(config.device_auth_password) - 1);
+    copy_cstr(config.account, input["account"] | "");
+    copy_cstr(config.device_auth_password, input["device_auth_password"] | "");
 
     if (config.node_ssid > 15) {
         error = "Node SSID must be 0-15";
@@ -608,17 +650,106 @@ void send_rpc_success(JsonVariantConst request, const std::function<void(JsonObj
     notify_rpc_json(json);
 }
 
+void cache_wifi_scan_results(int network_count) {
+    if (network_count < 0) return;
+
+    const int capped_count = std::min(network_count, static_cast<int>(WIFI_SCAN_CACHE_MAX));
+    g_wifi_scan_cache_count = static_cast<uint8_t>(capped_count);
+
+    for (int i = 0; i < capped_count; ++i) {
+        const String ssid = WiFi.SSID(i);
+        strncpy(g_wifi_scan_cache[i].ssid, ssid.c_str(), sizeof(g_wifi_scan_cache[i].ssid) - 1);
+        g_wifi_scan_cache[i].ssid[sizeof(g_wifi_scan_cache[i].ssid) - 1] = '\0';
+        g_wifi_scan_cache[i].rssi = WiFi.RSSI(i);
+        g_wifi_scan_cache[i].auth = static_cast<int32_t>(WiFi.encryptionType(i));
+    }
+
+    for (int i = capped_count; i < static_cast<int>(WIFI_SCAN_CACHE_MAX); ++i) {
+        g_wifi_scan_cache[i].ssid[0] = '\0';
+        g_wifi_scan_cache[i].rssi = 0;
+        g_wifi_scan_cache[i].auth = 0;
+    }
+
+    g_wifi_scan_cache_updated_at_ms = millis();
+}
+
+void append_cached_wifi_scan_results(JsonArray items) {
+    for (uint8_t i = 0; i < g_wifi_scan_cache_count; ++i) {
+        if (g_wifi_scan_cache[i].ssid[0] == '\0') continue;
+        JsonObject item = items.add<JsonObject>();
+        item["ssid"] = g_wifi_scan_cache[i].ssid;
+        item["rssi"] = g_wifi_scan_cache[i].rssi;
+        item["auth"] = g_wifi_scan_cache[i].auth;
+    }
+}
+
 void scan_wifi_networks(JsonVariantConst request) {
-    const int network_count = WiFi.scanNetworks(false, true);
-    send_rpc_success(request, [network_count](JsonObject data) {
-        JsonArray items = data["networks"].to<JsonArray>();
-        for (int i = 0; i < network_count; ++i) {
-            JsonObject item = items.add<JsonObject>();
-            item["ssid"] = WiFi.SSID(i);
-            item["rssi"] = WiFi.RSSI(i);
-            item["auth"] = static_cast<int>(WiFi.encryptionType(i));
+    bool partial = false;
+    bool timed_out = false;
+    bool scan_in_progress = false;
+    bool used_cache = false;
+    bool fresh = false;
+
+    int scan_count = -1;
+    if (!g_wifi_scan_in_progress) {
+        const int start_result = WiFi.scanNetworks(true, true);
+        if (start_result >= 0) {
+            scan_count = start_result;
+        } else if (start_result == WIFI_SCAN_STATUS_RUNNING) {
+            g_wifi_scan_in_progress = true;
+        } else {
+            partial = true;
+            used_cache = true;
         }
+    }
+
+    const uint32_t wait_started_at_ms = millis();
+    while (scan_count < 0 && g_wifi_scan_in_progress) {
+        const int status = WiFi.scanComplete();
+        if (status >= 0) {
+            scan_count = status;
+            g_wifi_scan_in_progress = false;
+            break;
+        }
+
+        if (status == WIFI_SCAN_STATUS_FAILED) {
+            g_wifi_scan_in_progress = false;
+            break;
+        }
+
+        if ((millis() - wait_started_at_ms) >= WIFI_SCAN_WAIT_BUDGET_MS) {
+            timed_out = true;
+            scan_in_progress = true;
+            break;
+        }
+
+        delay(WIFI_SCAN_POLL_INTERVAL_MS);
+    }
+
+    if (scan_count >= 0) {
+        cache_wifi_scan_results(scan_count);
         WiFi.scanDelete();
+        fresh = true;
+        partial = false;
+    } else {
+        partial = true;
+        used_cache = true;
+    }
+
+    const int32_t cache_age_ms = (g_wifi_scan_cache_updated_at_ms == 0)
+        ? -1
+        : static_cast<int32_t>(millis() - g_wifi_scan_cache_updated_at_ms);
+
+    send_rpc_success(request, [partial, timed_out, scan_in_progress, used_cache, fresh, scan_count, cache_age_ms](JsonObject data) {
+        data["partial"] = partial;
+        data["timed_out"] = timed_out;
+        data["scan_in_progress"] = scan_in_progress;
+        data["used_cache"] = used_cache;
+        data["fresh"] = fresh;
+        data["total"] = scan_count >= 0 ? scan_count : static_cast<int>(g_wifi_scan_cache_count);
+        data["cache_age_ms"] = cache_age_ms;
+        JsonArray items = data["networks"].to<JsonArray>();
+        append_cached_wifi_scan_results(items);
     });
 }
 
@@ -817,11 +948,42 @@ void enable_ble(const char *reason) {
 }
 
 void maybe_start_ble_for_boot_failure(const char *reason) {
+    suspend_wifi_retry_for_ble_provisioning();
+
     if (g_ble_enabled) {
         show_ble_popup(reason);
+        notify_status();
         return;
     }
     enable_ble(reason);
+}
+
+void suspend_wifi_retry_for_ble_provisioning() {
+    g_wifi_attempt_active = false;
+    g_wifi_next_retry_at_ms = 0;
+    g_wifi_retry_suspended = true;
+
+    if (WiFi.status() != WL_CONNECTED) {
+        g_wifi_manual_disconnect = true;
+        WiFi.disconnect(false, false);
+    }
+}
+
+void log_sram_usage() {
+    const uint32_t total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t used = (total > free) ? (total - free) : 0;
+    const uint32_t used_pct = (total > 0) ? static_cast<uint32_t>((used * 100UL) / total) : 0;
+
+    Serial.printf("[MEM] SRAM used=%lu/%lu (%lu%%), free=%lu, min_free=%lu, largest=%lu\n",
+                  static_cast<unsigned long>(used),
+                  static_cast<unsigned long>(total),
+                  static_cast<unsigned long>(used_pct),
+                  static_cast<unsigned long>(free),
+                  static_cast<unsigned long>(min_free),
+                  static_cast<unsigned long>(largest));
 }
 
 void handle_wifi_attempt_failure(const char *reason) {
@@ -875,6 +1037,7 @@ void connectivity_manager_init() {
 
     WiFi.mode(WIFI_STA);
     WiFi.persistent(false);
+    WiFi.setAutoReconnect(false);
     // ESP32-S3 requires Wi-Fi modem sleep to stay enabled while BLE is active.
     WiFi.setSleep(true);
     WiFi.onEvent(on_wifi_event);
@@ -927,6 +1090,13 @@ void connectivity_manager_update() {
         g_wifi_rssi = 0;
         if (g_wifi_manual_disconnect) {
             g_wifi_manual_disconnect = false;
+            notify_status();
+        } else if (g_wifi_retry_suspended) {
+            notify_status();
+        } else if (!g_wifi_attempt_active &&
+                   g_wifi_state != WiFiState::CONNECTING &&
+                   g_wifi_state != WiFiState::CONNECTED) {
+            // Ignore unrelated/disordered disconnect events while not attempting a link.
             notify_status();
         } else {
             handle_wifi_attempt_failure("station disconnected");
@@ -990,9 +1160,15 @@ void connectivity_manager_update() {
 
     const uint32_t now_ms = millis();
 
+    if (g_last_mem_log_at_ms == 0 || (now_ms - g_last_mem_log_at_ms) >= MEM_LOG_INTERVAL_MS) {
+        g_last_mem_log_at_ms = now_ms;
+        log_sram_usage();
+    }
+
     if (g_wifi_attempt_active && (now_ms - g_wifi_attempt_started_at_ms) >= WIFI_CONNECT_TIMEOUT_MS) {
         handle_wifi_attempt_failure("timeout");
-    } else if (!g_wifi_attempt_active && g_wifi_next_retry_at_ms != 0 && now_ms >= g_wifi_next_retry_at_ms) {
+    } else if (!g_wifi_retry_suspended && !g_wifi_attempt_active &&
+               g_wifi_next_retry_at_ms != 0 && now_ms >= g_wifi_next_retry_at_ms) {
         begin_wifi_connect_attempt(false);
     }
 

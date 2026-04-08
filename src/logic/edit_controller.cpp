@@ -1,6 +1,7 @@
 #include "edit_controller.h"
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include <lvgl.h>
 
 #include <cctype>
@@ -11,7 +12,11 @@
 
 #include "../drivers/sa818_driver.h"
 #include "../ui/ui.h"
+#include "connectivity_manager.h"
 #include "device_config.h"
+
+// Backlight control is implemented in main.cpp.
+extern void updateBacklight(float level);
 
 namespace {
 constexpr uint32_t FREQ_MIN_X10000 = 4000000;  // 400.0000 MHz
@@ -33,6 +38,7 @@ enum class EditStage {
     TX_TONE,
     RX_TONE,
     RX_SQL,
+    BAND,
     SETTINGS,
 };
 
@@ -42,8 +48,22 @@ enum class EditMode {
     EDIT,
 };
 
+enum class SettingsCursor : uint8_t {
+    BRIGHTNESS = 0,
+    BLE,
+    ABOUT,
+};
+
+enum class SettingsMode : uint8_t {
+    NONE = 0,
+    SELECT,
+    EDIT,
+};
+
 using SubAudioType = device_config::SubAudioType;
 using SubAudioSetting = device_config::SubAudioSetting;
+
+constexpr int32_t BACKLIGHT_PWM_STEP = 1;
 
 // SA818 manual CTCSS 1..38.
 constexpr const char *CTCSS_TONES[] = {
@@ -83,9 +103,39 @@ int8_t editing_digit_index = -1;
 bool sql_rx_active = false;
 bool radio_cfg_dirty = false;
 lv_obj_t *save_overlay = nullptr;
+uint8_t backlight_pwm = device_config::BACKLIGHT_PWM_MAX;
+SettingsCursor settings_cursor = SettingsCursor::BRIGHTNESS;
+SettingsMode settings_mode = SettingsMode::NONE;
+bool info_preselect_active = false;
+uint32_t last_settings_ble_refresh_ms = 0;
+uint32_t last_info_refresh_ms = 0;
+
+void apply_main_screen_overrides();
+void hide_header_update_indicators();
 
 bool is_editing_session_active() {
     return edit_stage != EditStage::NONE;
+}
+
+enum class ActiveScreen : uint8_t {
+    UNKNOWN = 0,
+    MAIN,
+    SETTINGS,
+    INFO,
+};
+
+ActiveScreen get_active_screen() {
+    lv_obj_t *active = lv_scr_act();
+    if (active == ui_main) {
+        return ActiveScreen::MAIN;
+    }
+    if (active == ui_SettingPAGE) {
+        return ActiveScreen::SETTINGS;
+    }
+    if (active == ui_InfoPage) {
+        return ActiveScreen::INFO;
+    }
+    return ActiveScreen::UNKNOWN;
 }
 
 bool is_frequency_stage() {
@@ -100,6 +150,10 @@ bool is_sql_stage() {
     return edit_stage == EditStage::RX_SQL;
 }
 
+bool is_band_stage() {
+    return edit_stage == EditStage::BAND;
+}
+
 bool is_rx_stage() {
     return edit_stage == EditStage::RX_FREQ ||
            edit_stage == EditStage::RX_TONE ||
@@ -112,6 +166,14 @@ bool is_select_mode() {
 
 bool is_edit_mode() {
     return is_editing_session_active() && edit_mode == EditMode::EDIT;
+}
+
+bool settings_in_select_mode() {
+    return settings_mode == SettingsMode::SELECT;
+}
+
+bool settings_in_edit_mode() {
+    return settings_mode == SettingsMode::EDIT;
 }
 
 bool has_selected_frequency_digit() {
@@ -201,10 +263,9 @@ void log_radio_config(const char *tag) {
 }
 
 uint32_t get_display_frequency_value() {
-    // In idle runtime, when RF is being received and forwarded to NET,
-    // show RX frequency on the main big frequency label.
-    if (!is_editing_session_active() && sql_rx_active) {
-        return rx_frequency_x10000;
+    // Runtime default: RX frequency. Switch to TX only while PTT is active.
+    if (!is_editing_session_active()) {
+        return sa818_is_tx() ? tx_frequency_x10000 : rx_frequency_x10000;
     }
 
     if (is_rx_stage()) {
@@ -520,6 +581,11 @@ void update_info_panel_state() {
             lv_obj_set_style_bg_opa(ui_infoPanel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
             lv_label_set_text(ui_Info, "RX SQL");
             break;
+        case EditStage::BAND:
+            lv_obj_set_style_bg_color(ui_infoPanel, lv_color_hex(INFO_PANEL_COLOR_IDLE), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_bg_opa(ui_infoPanel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_label_set_text(ui_Info, "Band");
+            break;
         case EditStage::SETTINGS:
             lv_obj_set_style_bg_color(ui_infoPanel, lv_color_hex(INFO_PANEL_COLOR_IDLE), LV_PART_MAIN | LV_STATE_DEFAULT);
             lv_obj_set_style_bg_opa(ui_infoPanel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -591,6 +657,25 @@ void render_sql_label() {
     lv_label_set_text(ui_RXSQL, sql_text);
 }
 
+void render_band_label() {
+    if (!ui_Band) {
+        return;
+    }
+
+    const char *band_text = radio_wide_band ? "25kHz" : "12.5kHz";
+
+    if (edit_stage == EditStage::BAND) {
+        lv_label_set_recolor(ui_Band, true);
+        char rendered[32] = {0};
+        snprintf(rendered, sizeof(rendered), "#%06lX %s#", static_cast<unsigned long>(active_highlight_color()), band_text);
+        lv_label_set_text(ui_Band, rendered);
+        return;
+    }
+
+    lv_label_set_recolor(ui_Band, false);
+    lv_label_set_text(ui_Band, band_text);
+}
+
 void clear_selection_border(lv_obj_t *obj) {
     if (!obj) {
         return;
@@ -615,6 +700,7 @@ void update_selection_border_state() {
     clear_selection_border(ui_TXCTCSS);
     clear_selection_border(ui_RXCTCSS);
     clear_selection_border(ui_RXSQL);
+    clear_selection_border(ui_Band);
     clear_selection_border(ui_toSetting);
 
     if (!is_editing_session_active()) {
@@ -640,6 +726,11 @@ void update_selection_border_state() {
 
     if (edit_stage == EditStage::RX_SQL) {
         apply_selection_border(ui_RXSQL, border_color, 2);
+        return;
+    }
+
+    if (edit_stage == EditStage::BAND) {
+        apply_selection_border(ui_Band, border_color, 2);
         return;
     }
 
@@ -715,6 +806,7 @@ void refresh_edit_widgets() {
     render_frequency_label();
     render_subaudio_labels();
     render_sql_label();
+    render_band_label();
     update_selection_border_state();
 }
 
@@ -741,13 +833,307 @@ void exit_edit_session() {
     set_edit_stage(EditStage::NONE);
 }
 
+void set_label_text_or_empty(lv_obj_t *label, const char *text) {
+    if (!label) {
+        return;
+    }
+
+    if (!text || text[0] == '\0') {
+        lv_label_set_text(label, "");
+        return;
+    }
+
+    lv_label_set_text(label, text);
+}
+
+void refresh_info_panel_preselect_state() {
+    clear_selection_border(ui_InfoP1);
+    if (info_preselect_active) {
+        apply_selection_border(ui_InfoP1, HIGHLIGHT_COLOR_SELECT, 2);
+    }
+}
+
+void apply_backlight_pwm(uint8_t pwm, bool persist) {
+    backlight_pwm = device_config::sanitize_backlight_pwm(pwm);
+    updateBacklight(static_cast<float>(backlight_pwm) / 255.0f);
+
+    if (ui_LightS) {
+        lv_slider_set_range(ui_LightS, device_config::BACKLIGHT_PWM_MIN, device_config::BACKLIGHT_PWM_MAX);
+        if (lv_slider_get_value(ui_LightS) != static_cast<int32_t>(backlight_pwm)) {
+            lv_slider_set_value(ui_LightS, backlight_pwm, LV_ANIM_OFF);
+        }
+    }
+
+    if (persist) {
+        if (!device_config::save_backlight_pwm(backlight_pwm)) {
+            Serial.println("Backlight save failed.");
+        }
+    }
+}
+
+void refresh_settings_ble_widgets() {
+    const bool ble_enabled = connectivity_manager_is_ble_enabled();
+    if (ui_BLES) {
+        if (ble_enabled) {
+            lv_obj_add_state(ui_BLES, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(ui_BLES, LV_STATE_CHECKED);
+        }
+    }
+
+    const char *ble_text = ble_enabled
+        ? connectivity_manager_get_ble_auth_code()
+        : connectivity_manager_get_ble_device_name();
+    set_label_text_or_empty(ui_BLEN, ble_text);
+}
+
+void refresh_settings_selection_state() {
+    clear_selection_border(ui_lightP);
+    clear_selection_border(ui_BLEP);
+    clear_selection_border(ui_InfoP);
+
+    if (settings_mode == SettingsMode::NONE) {
+        return;
+    }
+
+    lv_obj_t *target = nullptr;
+    switch (settings_cursor) {
+        case SettingsCursor::BRIGHTNESS:
+            target = ui_lightP;
+            break;
+        case SettingsCursor::BLE:
+            target = ui_BLEP;
+            break;
+        case SettingsCursor::ABOUT:
+            target = ui_InfoP;
+            break;
+        default:
+            break;
+    }
+
+    if (!target) {
+        return;
+    }
+
+    const uint32_t color = (settings_mode == SettingsMode::EDIT) ? HIGHLIGHT_COLOR_EDIT : HIGHLIGHT_COLOR_SELECT;
+    apply_selection_border(target, color, 2);
+}
+
+void refresh_settings_page_widgets() {
+    hide_header_update_indicators();
+
+    if (ui_LightS) {
+        lv_slider_set_range(ui_LightS, device_config::BACKLIGHT_PWM_MIN, device_config::BACKLIGHT_PWM_MAX);
+        if (lv_slider_get_value(ui_LightS) != static_cast<int32_t>(backlight_pwm)) {
+            lv_slider_set_value(ui_LightS, backlight_pwm, LV_ANIM_OFF);
+        }
+    }
+    refresh_settings_ble_widgets();
+    refresh_settings_selection_state();
+}
+
+void refresh_info_page_content() {
+    hide_header_update_indicators();
+
+    // Keep value fields left-anchored so dynamic text does not "float" horizontally.
+    auto align_info_value = [](lv_obj_t *label, lv_coord_t y) {
+        if (!label) {
+            return;
+        }
+        lv_obj_set_width(label, 175);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_align(label, LV_ALIGN_TOP_LEFT);
+        lv_obj_set_pos(label, 118, y);
+    };
+
+    align_info_value(ui_Mac, 16);
+    align_info_value(ui_Mac1, 50);
+    align_info_value(ui_ip2, 84);
+    align_info_value(ui_Callsign, 120);
+    align_info_value(ui_username, 154);
+
+    device_config::DeviceConfig config = {};
+    device_config::set_defaults(config);
+    device_config::load(config);
+
+    const uint64_t mac = ESP.getEfuseMac();
+    char mac_text[24] = {0};
+    snprintf(mac_text,
+             sizeof(mac_text),
+             "%02X:%02X:%02X:%02X:%02X:%02X",
+             static_cast<unsigned int>((mac >> 40) & 0xFFULL),
+             static_cast<unsigned int>((mac >> 32) & 0xFFULL),
+             static_cast<unsigned int>((mac >> 24) & 0xFFULL),
+             static_cast<unsigned int>((mac >> 16) & 0xFFULL),
+             static_cast<unsigned int>((mac >> 8) & 0xFFULL),
+             static_cast<unsigned int>(mac & 0xFFULL));
+
+    char server_text[96] = {0};
+    if (config.server.udp_host[0] != '\0' && config.server.udp_port != 0) {
+        snprintf(server_text, sizeof(server_text), "%s:%u", config.server.udp_host, config.server.udp_port);
+    }
+
+    char ip_text[20] = {0};
+    if (WiFi.status() == WL_CONNECTED) {
+        const String ip = WiFi.localIP().toString();
+        snprintf(ip_text, sizeof(ip_text), "%s", ip.c_str());
+    }
+
+    set_label_text_or_empty(ui_Mac, mac_text);
+    set_label_text_or_empty(ui_Mac1, server_text);
+    set_label_text_or_empty(ui_ip2, ip_text);
+    set_label_text_or_empty(ui_Callsign, config.server.callsign);
+    set_label_text_or_empty(ui_username, config.server.account);
+}
+
+void open_info_page() {
+    if (!ui_InfoPage) {
+        return;
+    }
+
+    info_preselect_active = false;
+    refresh_info_page_content();
+    lv_disp_load_scr(ui_InfoPage);
+    refresh_info_panel_preselect_state();
+}
+
+void close_info_page_to_settings() {
+    if (!ui_SettingPAGE) {
+        return;
+    }
+
+    info_preselect_active = false;
+    lv_disp_load_scr(ui_SettingPAGE);
+    refresh_settings_page_widgets();
+}
+
+void close_settings_page_to_main() {
+    if (!ui_main) {
+        return;
+    }
+
+    settings_mode = SettingsMode::NONE;
+    settings_cursor = SettingsCursor::BRIGHTNESS;
+    lv_disp_load_scr(ui_main);
+    exit_edit_session();
+    apply_main_screen_overrides();
+}
+
 void open_settings_page() {
     if (!ui_SettingPAGE) {
         return;
     }
 
     exit_edit_session();
+    settings_mode = SettingsMode::NONE;
+    settings_cursor = SettingsCursor::BRIGHTNESS;
+    info_preselect_active = false;
+    refresh_settings_page_widgets();
     lv_disp_load_scr(ui_SettingPAGE);
+    refresh_settings_page_widgets();
+}
+
+void move_settings_cursor(int32_t delta) {
+    if (!settings_in_select_mode() || delta == 0) {
+        return;
+    }
+
+    int32_t cursor = static_cast<int32_t>(settings_cursor) + delta;
+    constexpr int32_t SETTINGS_ITEM_COUNT = 3;
+    cursor %= SETTINGS_ITEM_COUNT;
+    if (cursor < 0) {
+        cursor += SETTINGS_ITEM_COUNT;
+    }
+
+    settings_cursor = static_cast<SettingsCursor>(cursor);
+    refresh_settings_selection_state();
+}
+
+void step_backlight(int32_t delta) {
+    if (!settings_in_edit_mode() || settings_cursor != SettingsCursor::BRIGHTNESS || delta == 0) {
+        return;
+    }
+
+    int32_t next = static_cast<int32_t>(backlight_pwm) + delta * BACKLIGHT_PWM_STEP;
+    if (next < static_cast<int32_t>(device_config::BACKLIGHT_PWM_MIN)) {
+        next = device_config::BACKLIGHT_PWM_MIN;
+    }
+    if (next > static_cast<int32_t>(device_config::BACKLIGHT_PWM_MAX)) {
+        next = device_config::BACKLIGHT_PWM_MAX;
+    }
+
+    apply_backlight_pwm(static_cast<uint8_t>(next), true);
+}
+
+void toggle_ble_from_settings() {
+    const bool target = !connectivity_manager_is_ble_enabled();
+    connectivity_manager_set_ble_enabled(target, false);
+    refresh_settings_ble_widgets();
+}
+
+void on_settings_button_click() {
+    switch (settings_mode) {
+        case SettingsMode::NONE:
+            settings_mode = SettingsMode::SELECT;
+            settings_cursor = SettingsCursor::BRIGHTNESS;
+            refresh_settings_selection_state();
+            break;
+        case SettingsMode::SELECT:
+            switch (settings_cursor) {
+                case SettingsCursor::BRIGHTNESS:
+                    settings_mode = SettingsMode::EDIT;
+                    refresh_settings_selection_state();
+                    break;
+                case SettingsCursor::BLE:
+                    toggle_ble_from_settings();
+                    break;
+                case SettingsCursor::ABOUT:
+                    settings_mode = SettingsMode::NONE;
+                    open_info_page();
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case SettingsMode::EDIT:
+            settings_mode = SettingsMode::SELECT;
+            refresh_settings_selection_state();
+            break;
+        default:
+            break;
+    }
+}
+
+void on_settings_key0_short_press() {
+    if (settings_mode == SettingsMode::EDIT) {
+        settings_mode = SettingsMode::SELECT;
+        refresh_settings_selection_state();
+        return;
+    }
+
+    if (settings_mode == SettingsMode::SELECT) {
+        settings_mode = SettingsMode::NONE;
+        refresh_settings_selection_state();
+        return;
+    }
+
+    close_settings_page_to_main();
+}
+
+void on_info_button_click() {
+    info_preselect_active = !info_preselect_active;
+    refresh_info_panel_preselect_state();
+}
+
+void on_info_key0_short_press() {
+    if (info_preselect_active) {
+        info_preselect_active = false;
+        refresh_info_panel_preselect_state();
+        return;
+    }
+
+    close_info_page_to_settings();
 }
 
 void advance_to_next_stage() {
@@ -765,6 +1151,9 @@ void advance_to_next_stage() {
             set_edit_stage(EditStage::RX_SQL);
             break;
         case EditStage::RX_SQL:
+            set_edit_stage(EditStage::BAND);
+            break;
+        case EditStage::BAND:
             // Leave SA818 settings: persist and then apply to module.
             save_and_apply_radio_config();
             set_edit_stage(EditStage::SETTINGS);
@@ -859,22 +1248,48 @@ void step_squelch(int32_t delta) {
     refresh_edit_widgets();
 }
 
+void step_band(int32_t delta) {
+    if (!is_band_stage() || !is_edit_mode() || delta == 0) {
+        return;
+    }
+
+    // Any rotate toggles between narrow(12.5kHz) and wide(25kHz).
+    radio_wide_band = !radio_wide_band;
+    radio_cfg_dirty = true;
+    refresh_edit_widgets();
+}
+
 void apply_main_screen_overrides() {
+    hide_header_update_indicators();
+}
+
+void hide_header_update_indicators() {
     if (ui_hasNewUpdate) {
         lv_obj_add_flag(ui_hasNewUpdate, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ui_hasNewUpdate2) {
+        lv_obj_add_flag(ui_hasNewUpdate2, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ui_hasNewUpdate3) {
+        lv_obj_add_flag(ui_hasNewUpdate3, LV_OBJ_FLAG_HIDDEN);
     }
 }
 } // namespace
 
 void edit_controller_init() {
     load_radio_config_from_storage();
+    backlight_pwm = device_config::load_backlight_pwm();
     radio_cfg_dirty = false;
     log_radio_config("LOADED");
     set_edit_stage(EditStage::NONE);
+    refresh_settings_page_widgets();
 }
 
 void edit_controller_on_enter_main_screen() {
     apply_main_screen_overrides();
+    settings_mode = SettingsMode::NONE;
+    settings_cursor = SettingsCursor::BRIGHTNESS;
+    info_preselect_active = false;
     exit_edit_session();
 }
 
@@ -906,6 +1321,27 @@ bool edit_controller_boot_radio_init() {
 }
 
 void edit_controller_update() {
+    const uint32_t now_ms = millis();
+    const ActiveScreen screen = get_active_screen();
+
+    if (screen == ActiveScreen::SETTINGS) {
+        if (last_settings_ble_refresh_ms == 0 || (now_ms - last_settings_ble_refresh_ms) >= 250) {
+            last_settings_ble_refresh_ms = now_ms;
+            refresh_settings_ble_widgets();
+        }
+    } else {
+        last_settings_ble_refresh_ms = 0;
+    }
+
+    if (screen == ActiveScreen::INFO) {
+        if (last_info_refresh_ms == 0 || (now_ms - last_info_refresh_ms) >= 1000) {
+            last_info_refresh_ms = now_ms;
+            refresh_info_page_content();
+        }
+    } else {
+        last_info_refresh_ms = 0;
+    }
+
     if (!sa818_is_enabled()) {
         return;
     }
@@ -922,6 +1358,44 @@ void edit_controller_update() {
 }
 
 void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
+    const ActiveScreen screen = get_active_screen();
+
+    if (screen == ActiveScreen::SETTINGS) {
+        switch (event) {
+            case EC11Event::ROTATE_CW:
+                if (settings_in_edit_mode()) {
+                    step_backlight((value == 0) ? 1 : value);
+                } else if (settings_in_select_mode()) {
+                    move_settings_cursor((value == 0) ? 1 : value);
+                }
+                break;
+            case EC11Event::ROTATE_CCW:
+                if (settings_in_edit_mode()) {
+                    step_backlight(-((value == 0) ? 1 : value));
+                } else if (settings_in_select_mode()) {
+                    move_settings_cursor(-((value == 0) ? 1 : value));
+                }
+                break;
+            case EC11Event::BUTTON_CLICK:
+                on_settings_button_click();
+                break;
+            default:
+                break;
+        }
+        return;
+    }
+
+    if (screen == ActiveScreen::INFO) {
+        if (event == EC11Event::BUTTON_CLICK) {
+            on_info_button_click();
+        }
+        return;
+    }
+
+    if (screen != ActiveScreen::MAIN) {
+        return;
+    }
+
     switch (event) {
         case EC11Event::ROTATE_CW: {
             const int32_t step = (value == 0) ? 1 : value;
@@ -935,6 +1409,8 @@ void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
                 step_subaudio_option(step);
             } else if (is_sql_stage()) {
                 step_squelch(step);
+            } else if (is_band_stage()) {
+                step_band(step);
             }
             break;
         }
@@ -950,6 +1426,8 @@ void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
                 step_subaudio_option(-step);
             } else if (is_sql_stage()) {
                 step_squelch(-step);
+            } else if (is_band_stage()) {
+                step_band(-step);
             }
             break;
         }
@@ -971,10 +1449,25 @@ void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
 }
 
 void edit_controller_on_key0_short_press() {
-    if (!is_editing_session_active()) {
+    const ActiveScreen screen = get_active_screen();
+
+    if (screen == ActiveScreen::SETTINGS) {
+        on_settings_key0_short_press();
         return;
     }
-    advance_to_next_stage();
+
+    if (screen == ActiveScreen::INFO) {
+        on_info_key0_short_press();
+        return;
+    }
+
+    if (screen != ActiveScreen::MAIN) {
+        return;
+    }
+
+    if (is_editing_session_active()) {
+        advance_to_next_stage();
+    }
 }
 
 void edit_controller_get_radio_config(device_config::RadioConfig &config) {

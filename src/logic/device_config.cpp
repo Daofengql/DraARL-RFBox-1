@@ -10,6 +10,7 @@ constexpr char CONFIG_NS[] = "device_cfg";
 constexpr char DEFAULT_SERVER_UDP_HOST[] = "ptt.4l2.cn";
 constexpr uint16_t DEFAULT_SERVER_UDP_PORT = 60050;
 constexpr char DEFAULT_SERVER_HTTP_API_BASE_URL[] = "https://ptt.4l2.cn/";
+constexpr char BACKLIGHT_KEY[] = "ui_bl";
 
 template <size_t N>
 void copy_cstr(char (&dest)[N], const char *src) {
@@ -236,6 +237,38 @@ bool save_server(const ServerConfig &config) {
 
 bool has_wifi_credentials(const WiFiConfig &config) {
     return config.ssid[0] != '\0';
+}
+
+uint8_t sanitize_backlight_pwm(uint8_t pwm) {
+    if (pwm < BACKLIGHT_PWM_MIN) {
+        return BACKLIGHT_PWM_MIN;
+    }
+    if (pwm > BACKLIGHT_PWM_MAX) {
+        return BACKLIGHT_PWM_MAX;
+    }
+    return pwm;
+}
+
+uint8_t load_backlight_pwm() {
+    Preferences prefs;
+    if (!prefs.begin(CONFIG_NS, true)) {
+        return BACKLIGHT_PWM_MAX;
+    }
+
+    const uint8_t stored = prefs.getUChar(BACKLIGHT_KEY, BACKLIGHT_PWM_MAX);
+    prefs.end();
+    return sanitize_backlight_pwm(stored);
+}
+
+bool save_backlight_pwm(uint8_t pwm) {
+    Preferences prefs;
+    if (!prefs.begin(CONFIG_NS, false)) {
+        return false;
+    }
+
+    const bool ok = prefs.putUChar(BACKLIGHT_KEY, sanitize_backlight_pwm(pwm)) > 0;
+    prefs.end();
+    return ok;
 }
 
 } // namespace device_config

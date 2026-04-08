@@ -6,6 +6,22 @@
 #include "ui.h"
 
 lv_obj_t * ui_SettingPAGE = NULL;
+lv_obj_t * ui_lightP = NULL;
+lv_obj_t * ui_LightS = NULL;
+lv_obj_t * ui_Label1 = NULL;
+lv_obj_t * ui_BLEP = NULL;
+lv_obj_t * ui_Label2 = NULL;
+lv_obj_t * ui_BLES = NULL;
+lv_obj_t * ui_BLEN = NULL;
+lv_obj_t * ui_InfoP = NULL;
+lv_obj_t * ui_Label3 = NULL;
+lv_obj_t * ui_Label4 = NULL;
+lv_obj_t * ui_header3 = NULL;
+lv_obj_t * ui_logo3 = NULL;
+lv_obj_t * ui_title2 = NULL;
+lv_obj_t * ui_wifistat2 = NULL;
+lv_obj_t * ui_bluestat2 = NULL;
+lv_obj_t * ui_hasNewUpdate2 = NULL;
 // event funtions
 
 // build funtions
@@ -15,6 +31,146 @@ void ui_SettingPAGE_screen_init(void)
     ui_SettingPAGE = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_SettingPAGE, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
+    ui_lightP = lv_obj_create(ui_SettingPAGE);
+    lv_obj_set_width(ui_lightP, 310);
+    lv_obj_set_height(ui_lightP, 30);
+    lv_obj_set_x(ui_lightP, 0);
+    lv_obj_set_y(ui_lightP, -65);
+    lv_obj_set_align(ui_lightP, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_lightP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_LightS = lv_slider_create(ui_lightP);
+    lv_slider_set_value(ui_LightS, 0, LV_ANIM_OFF);
+    if(lv_slider_get_mode(ui_LightS) == LV_SLIDER_MODE_RANGE) lv_slider_set_left_value(ui_LightS, 0, LV_ANIM_OFF);
+    lv_obj_set_width(ui_LightS, 230);
+    lv_obj_set_height(ui_LightS, 10);
+    lv_obj_set_x(ui_LightS, 26);
+    lv_obj_set_y(ui_LightS, 0);
+    lv_obj_set_align(ui_LightS, LV_ALIGN_CENTER);
+
+    ui_Label1 = lv_label_create(ui_lightP);
+    lv_obj_set_width(ui_Label1, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Label1, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Label1, -125);
+    lv_obj_set_y(ui_Label1, 0);
+    lv_obj_set_align(ui_Label1, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Label1, "亮度:");
+    lv_obj_set_style_text_font(ui_Label1, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_BLEP = lv_obj_create(ui_SettingPAGE);
+    lv_obj_set_width(ui_BLEP, 310);
+    lv_obj_set_height(ui_BLEP, 40);
+    lv_obj_set_x(ui_BLEP, 0);
+    lv_obj_set_y(ui_BLEP, -25);
+    lv_obj_set_align(ui_BLEP, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_BLEP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_Label2 = lv_label_create(ui_BLEP);
+    lv_obj_set_width(ui_Label2, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Label2, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Label2, -125);
+    lv_obj_set_y(ui_Label2, 0);
+    lv_obj_set_align(ui_Label2, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Label2, "蓝牙:");
+    lv_obj_set_style_text_font(ui_Label2, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_BLES = lv_switch_create(ui_BLEP);
+    lv_obj_set_width(ui_BLES, 50);
+    lv_obj_set_height(ui_BLES, 25);
+    lv_obj_set_x(ui_BLES, 115);
+    lv_obj_set_y(ui_BLES, 0);
+    lv_obj_set_align(ui_BLES, LV_ALIGN_CENTER);
+
+    ui_BLEN = lv_label_create(ui_BLEP);
+    lv_obj_set_width(ui_BLEN, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_BLEN, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_align(ui_BLEN, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_BLEN, "DraARL-100000");
+
+    ui_InfoP = lv_obj_create(ui_SettingPAGE);
+    lv_obj_set_width(ui_InfoP, 310);
+    lv_obj_set_height(ui_InfoP, 40);
+    lv_obj_set_x(ui_InfoP, 0);
+    lv_obj_set_y(ui_InfoP, 95);
+    lv_obj_set_align(ui_InfoP, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_InfoP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_Label3 = lv_label_create(ui_InfoP);
+    lv_obj_set_width(ui_Label3, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Label3, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Label3, -112);
+    lv_obj_set_y(ui_Label3, 0);
+    lv_obj_set_align(ui_Label3, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Label3, "关于本机:");
+    lv_obj_set_style_text_font(ui_Label3, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_Label4 = lv_label_create(ui_InfoP);
+    lv_obj_set_width(ui_Label4, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Label4, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Label4, 135);
+    lv_obj_set_y(ui_Label4, 0);
+    lv_obj_set_align(ui_Label4, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Label4, ">");
+
+    ui_header3 = lv_obj_create(ui_SettingPAGE);
+    lv_obj_remove_style_all(ui_header3);
+    lv_obj_set_width(ui_header3, 320);
+    lv_obj_set_height(ui_header3, 30);
+    lv_obj_set_x(ui_header3, 0);
+    lv_obj_set_y(ui_header3, -105);
+    lv_obj_set_align(ui_header3, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_header3, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_set_style_bg_color(ui_header3, lv_color_hex(0x22262D), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_header3, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_logo3 = lv_label_create(ui_header3);
+    lv_obj_set_width(ui_logo3, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_logo3, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_logo3, -110);
+    lv_obj_set_y(ui_logo3, 0);
+    lv_obj_set_align(ui_logo3, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_logo3, "DraARL-PTT");
+    lv_obj_set_style_text_color(ui_logo3, lv_color_hex(0x00DDFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_logo3, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_logo3, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_title2 = lv_label_create(ui_header3);
+    lv_obj_set_width(ui_title2, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_title2, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_align(ui_title2, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_title2, "设置");
+    lv_obj_set_style_text_font(ui_title2, &ui_font_system20, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_wifistat2 = lv_img_create(ui_header3);
+    lv_img_set_src(ui_wifistat2, &ui_img_wifi_bad_png);
+    lv_obj_set_width(ui_wifistat2, LV_SIZE_CONTENT);   /// 24
+    lv_obj_set_height(ui_wifistat2, LV_SIZE_CONTENT);    /// 24
+    lv_obj_set_x(ui_wifistat2, 140);
+    lv_obj_set_y(ui_wifistat2, 0);
+    lv_obj_set_align(ui_wifistat2, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_wifistat2, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
+    lv_obj_clear_flag(ui_wifistat2, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_bluestat2 = lv_img_create(ui_header3);
+    lv_img_set_src(ui_bluestat2, &ui_img_bluetooth_disabled_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);
+    lv_obj_set_width(ui_bluestat2, LV_SIZE_CONTENT);   /// 24
+    lv_obj_set_height(ui_bluestat2, LV_SIZE_CONTENT);    /// 24
+    lv_obj_set_x(ui_bluestat2, 110);
+    lv_obj_set_y(ui_bluestat2, 0);
+    lv_obj_set_align(ui_bluestat2, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_bluestat2, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
+    lv_obj_clear_flag(ui_bluestat2, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_hasNewUpdate2 = lv_img_create(ui_header3);
+    lv_img_set_src(ui_hasNewUpdate2, &ui_img_browser_updated_24dp_e3e3e3_fill0_wght400_grad0_opsz24_png);
+    lv_obj_set_width(ui_hasNewUpdate2, LV_SIZE_CONTENT);   /// 24
+    lv_obj_set_height(ui_hasNewUpdate2, LV_SIZE_CONTENT);    /// 24
+    lv_obj_set_x(ui_hasNewUpdate2, 80);
+    lv_obj_set_y(ui_hasNewUpdate2, 0);
+    lv_obj_set_align(ui_hasNewUpdate2, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_hasNewUpdate2, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
+    lv_obj_clear_flag(ui_hasNewUpdate2, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
 }
 
 void ui_SettingPAGE_screen_destroy(void)
@@ -23,5 +179,21 @@ void ui_SettingPAGE_screen_destroy(void)
 
     // NULL screen variables
     ui_SettingPAGE = NULL;
+    ui_lightP = NULL;
+    ui_LightS = NULL;
+    ui_Label1 = NULL;
+    ui_BLEP = NULL;
+    ui_Label2 = NULL;
+    ui_BLES = NULL;
+    ui_BLEN = NULL;
+    ui_InfoP = NULL;
+    ui_Label3 = NULL;
+    ui_Label4 = NULL;
+    ui_header3 = NULL;
+    ui_logo3 = NULL;
+    ui_title2 = NULL;
+    ui_wifistat2 = NULL;
+    ui_bluestat2 = NULL;
+    ui_hasNewUpdate2 = NULL;
 
 }

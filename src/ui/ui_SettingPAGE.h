@@ -14,6 +14,22 @@ extern "C" {
 extern void ui_SettingPAGE_screen_init(void);
 extern void ui_SettingPAGE_screen_destroy(void);
 extern lv_obj_t * ui_SettingPAGE;
+extern lv_obj_t * ui_lightP;
+extern lv_obj_t * ui_LightS;
+extern lv_obj_t * ui_Label1;
+extern lv_obj_t * ui_BLEP;
+extern lv_obj_t * ui_Label2;
+extern lv_obj_t * ui_BLES;
+extern lv_obj_t * ui_BLEN;
+extern lv_obj_t * ui_InfoP;
+extern lv_obj_t * ui_Label3;
+extern lv_obj_t * ui_Label4;
+extern lv_obj_t * ui_header3;
+extern lv_obj_t * ui_logo3;
+extern lv_obj_t * ui_title2;
+extern lv_obj_t * ui_wifistat2;
+extern lv_obj_t * ui_bluestat2;
+extern lv_obj_t * ui_hasNewUpdate2;
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus

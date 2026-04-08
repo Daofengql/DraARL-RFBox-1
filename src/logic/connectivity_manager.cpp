@@ -25,7 +25,6 @@ constexpr uint8_t WIFI_BOOT_FAILURE_LIMIT = 3;
 constexpr uint32_t BLE_IDLE_TIMEOUT_MS = 10 * 60 * 1000UL;
 constexpr uint8_t BLE_AUTH_CODE_LEN = 6;
 constexpr size_t BLE_RPC_CHUNK_PAYLOAD = 19;
-constexpr uint32_t MEM_LOG_INTERVAL_MS = 5000;
 constexpr uint32_t WIFI_SCAN_WAIT_BUDGET_MS = 3000;
 constexpr uint32_t WIFI_SCAN_POLL_INTERVAL_MS = 120;
 constexpr uint8_t WIFI_SCAN_CACHE_MAX = 32;
@@ -66,7 +65,6 @@ bool g_wifi_retry_suspended = false;
 uint8_t g_wifi_boot_failures = 0;
 uint32_t g_wifi_attempt_started_at_ms = 0;
 uint32_t g_wifi_next_retry_at_ms = 0;
-uint32_t g_last_mem_log_at_ms = 0;
 WiFiState g_wifi_state = WiFiState::UNINITIALIZED;
 int32_t g_wifi_rssi = 0;
 
@@ -179,8 +177,20 @@ void refresh_status_icons() {
     if (ui_wifistat) {
         lv_img_set_src(ui_wifistat, current_wifi_icon());
     }
+    if (ui_wifistat2) {
+        lv_img_set_src(ui_wifistat2, current_wifi_icon());
+    }
+    if (ui_wifistat3) {
+        lv_img_set_src(ui_wifistat3, current_wifi_icon());
+    }
     if (ui_bluestat) {
         lv_img_set_src(ui_bluestat, current_ble_icon());
+    }
+    if (ui_bluestat2) {
+        lv_img_set_src(ui_bluestat2, current_ble_icon());
+    }
+    if (ui_bluestat3) {
+        lv_img_set_src(ui_bluestat3, current_ble_icon());
     }
 }
 
@@ -377,12 +387,12 @@ void schedule_wifi_retry(uint32_t delay_ms) {
 void begin_wifi_connect_attempt(bool reset_failures);
 void start_ble_advertising();
 void process_rpc_request(const String &json_text);
+void enable_ble(const char *reason, bool show_popup);
 void disable_ble();
 void maybe_start_ble_for_boot_failure(const char *reason);
 void handle_wifi_attempt_failure(const char *reason);
 void on_wifi_event(arduino_event_id_t event);
 void suspend_wifi_retry_for_ble_provisioning();
-void log_sram_usage();
 
 void begin_wifi_connect_attempt(bool reset_failures) {
     if (!g_main_screen_ready) return;
@@ -930,7 +940,7 @@ void disable_ble() {
     Serial.println("[BLE] Disabled.");
 }
 
-void enable_ble(const char *reason) {
+void enable_ble(const char *reason, bool show_popup) {
     generate_auth_code();
     init_ble_stack();
     start_ble_advertising();
@@ -942,7 +952,11 @@ void enable_ble(const char *reason) {
     if (g_ble_auth_char) {
         g_ble_auth_char->setValue("READY");
     }
-    show_ble_popup(reason);
+    if (show_popup) {
+        show_ble_popup(reason);
+    } else {
+        hide_ble_popup();
+    }
     notify_status();
     Serial.printf("[BLE] Enabled with auth code %s\n", g_ble_auth_code);
 }
@@ -955,7 +969,7 @@ void maybe_start_ble_for_boot_failure(const char *reason) {
         notify_status();
         return;
     }
-    enable_ble(reason);
+    enable_ble(reason, true);
 }
 
 void suspend_wifi_retry_for_ble_provisioning() {
@@ -969,22 +983,6 @@ void suspend_wifi_retry_for_ble_provisioning() {
     }
 }
 
-void log_sram_usage() {
-    const uint32_t total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    const uint32_t free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    const uint32_t min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    const uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    const uint32_t used = (total > free) ? (total - free) : 0;
-    const uint32_t used_pct = (total > 0) ? static_cast<uint32_t>((used * 100UL) / total) : 0;
-
-    Serial.printf("[MEM] SRAM used=%lu/%lu (%lu%%), free=%lu, min_free=%lu, largest=%lu\n",
-                  static_cast<unsigned long>(used),
-                  static_cast<unsigned long>(total),
-                  static_cast<unsigned long>(used_pct),
-                  static_cast<unsigned long>(free),
-                  static_cast<unsigned long>(min_free),
-                  static_cast<unsigned long>(largest));
-}
 
 void handle_wifi_attempt_failure(const char *reason) {
     g_wifi_attempt_active = false;
@@ -1160,11 +1158,6 @@ void connectivity_manager_update() {
 
     const uint32_t now_ms = millis();
 
-    if (g_last_mem_log_at_ms == 0 || (now_ms - g_last_mem_log_at_ms) >= MEM_LOG_INTERVAL_MS) {
-        g_last_mem_log_at_ms = now_ms;
-        log_sram_usage();
-    }
-
     if (g_wifi_attempt_active && (now_ms - g_wifi_attempt_started_at_ms) >= WIFI_CONNECT_TIMEOUT_MS) {
         handle_wifi_attempt_failure("timeout");
     } else if (!g_wifi_retry_suspended && !g_wifi_attempt_active &&
@@ -1192,4 +1185,49 @@ bool connectivity_manager_handle_encoder_event(EC11Event event, int32_t value) {
     }
 
     return false;
+}
+
+bool connectivity_manager_set_ble_enabled(bool enable, bool show_popup) {
+    if (!g_manager_initialized) {
+        connectivity_manager_init();
+    }
+
+    if (enable) {
+        if (g_ble_enabled) {
+            if (show_popup) {
+                show_ble_popup("Manual BLE provisioning is active.");
+            } else {
+                hide_ble_popup();
+            }
+            notify_status();
+            return true;
+        }
+
+        enable_ble(show_popup ? "Manual BLE provisioning is active." : nullptr, show_popup);
+        return true;
+    }
+
+    if (!g_ble_enabled) {
+        hide_ble_popup();
+        notify_status();
+        return true;
+    }
+
+    disable_ble();
+    return true;
+}
+
+bool connectivity_manager_is_ble_enabled() {
+    return g_ble_enabled;
+}
+
+const char *connectivity_manager_get_ble_auth_code() {
+    return g_ble_auth_code;
+}
+
+const char *connectivity_manager_get_ble_device_name() {
+    if (g_ble_device_name[0] == '\0') {
+        build_ble_device_name();
+    }
+    return g_ble_device_name;
 }

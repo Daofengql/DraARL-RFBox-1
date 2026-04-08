@@ -13,8 +13,9 @@ lv_obj_t * ui_Freq = NULL;
 lv_obj_t * ui_TXCTCSS = NULL;
 lv_obj_t * ui_RXCTCSS = NULL;
 lv_obj_t * ui_CTCSSinfo = NULL;
-lv_obj_t * ui_SQLinfo = NULL;
+lv_obj_t * ui_SQLBandinfo = NULL;
 lv_obj_t * ui_RXSQL = NULL;
+lv_obj_t * ui_Band = NULL;
 lv_obj_t * ui_header = NULL;
 lv_obj_t * ui_logo = NULL;
 lv_obj_t * ui_time = NULL;
@@ -103,27 +104,38 @@ void ui_main_screen_init(void)
     lv_obj_set_style_text_opa(ui_CTCSSinfo, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_CTCSSinfo, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_SQLinfo = lv_label_create(ui_mainContainer);
-    lv_obj_set_width(ui_SQLinfo, LV_SIZE_CONTENT);   /// 1
-    lv_obj_set_height(ui_SQLinfo, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_SQLinfo, -13);
-    lv_obj_set_y(ui_SQLinfo, 95);
-    lv_obj_set_align(ui_SQLinfo, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_SQLinfo, "SQL:");
-    lv_obj_set_style_text_color(ui_SQLinfo, lv_color_hex(0x70FF52), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_opa(ui_SQLinfo, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_SQLinfo, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+    ui_SQLBandinfo = lv_label_create(ui_mainContainer);
+    lv_obj_set_width(ui_SQLBandinfo, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_SQLBandinfo, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_SQLBandinfo, 0);
+    lv_obj_set_y(ui_SQLBandinfo, 95);
+    lv_obj_set_align(ui_SQLBandinfo, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_SQLBandinfo, "SQL:             Band:                   ");
+    lv_obj_set_style_text_color(ui_SQLBandinfo, lv_color_hex(0x70FF52), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_SQLBandinfo, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_SQLBandinfo, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_RXSQL = lv_label_create(ui_mainContainer);
     lv_obj_set_width(ui_RXSQL, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_RXSQL, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_RXSQL, 20);
+    lv_obj_set_x(ui_RXSQL, -54);
     lv_obj_set_y(ui_RXSQL, 95);
     lv_obj_set_align(ui_RXSQL, LV_ALIGN_CENTER);
     lv_label_set_text(ui_RXSQL, "1");
     lv_obj_set_style_text_color(ui_RXSQL, lv_color_hex(0xFF2900), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_RXSQL, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_RXSQL, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_Band = lv_label_create(ui_mainContainer);
+    lv_obj_set_width(ui_Band, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Band, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Band, 75);
+    lv_obj_set_y(ui_Band, 95);
+    lv_obj_set_align(ui_Band, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Band, "25kHz");
+    lv_obj_set_style_text_color(ui_Band, lv_color_hex(0xFF2900), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_Band, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_Band, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_header = lv_obj_create(ui_main);
     lv_obj_remove_style_all(ui_header);
@@ -247,8 +259,9 @@ void ui_main_screen_destroy(void)
     ui_TXCTCSS = NULL;
     ui_RXCTCSS = NULL;
     ui_CTCSSinfo = NULL;
-    ui_SQLinfo = NULL;
+    ui_SQLBandinfo = NULL;
     ui_RXSQL = NULL;
+    ui_Band = NULL;
     ui_header = NULL;
     ui_logo = NULL;
     ui_time = NULL;

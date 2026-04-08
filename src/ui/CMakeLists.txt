@@ -1,6 +1,7 @@
 SET(SOURCES ui_StartUP.c
     ui_main.c
     ui_SettingPAGE.c
+    ui_InfoPage.c
     ui.c
     ui_comp_hook.c
     ui_helpers.c
@@ -17,6 +18,8 @@ SET(SOURCES ui_StartUP.c
     ui_img_wifi_2_png.c
     ui_img_wifi_3_png.c
     ui_img_wifi_4_png.c
-    ui_img_wifi_off_png.c)
+    ui_img_wifi_off_png.c
+    fonts/ui_font_system.c
+    fonts/ui_font_system20.c)
 
 add_library(ui ${SOURCES})

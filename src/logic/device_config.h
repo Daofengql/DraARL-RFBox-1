@@ -16,6 +16,8 @@ constexpr size_t URL_MAX_LEN = 127;
 constexpr size_t ACCOUNT_MAX_LEN = 31;
 constexpr size_t PASSWORD_MAX_LEN = 63;
 constexpr size_t CALLSIGN_MAX_LEN = 15;
+constexpr uint8_t BACKLIGHT_PWM_MIN = 20;
+constexpr uint8_t BACKLIGHT_PWM_MAX = 255;
 
 enum class SubAudioType : uint8_t {
     OFF = 0,
@@ -76,6 +78,9 @@ bool save_radio(const RadioConfig &config);
 bool save_server(const ServerConfig &config);
 
 bool has_wifi_credentials(const WiFiConfig &config);
+uint8_t sanitize_backlight_pwm(uint8_t pwm);
+uint8_t load_backlight_pwm();
+bool save_backlight_pwm(uint8_t pwm);
 
 } // namespace device_config
 

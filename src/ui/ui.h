@@ -30,6 +30,7 @@ extern "C" {
 #include "ui_StartUP.h"
 #include "ui_main.h"
 #include "ui_SettingPAGE.h"
+#include "ui_InfoPage.h"
 
 ///////////////////// VARIABLES ////////////////////
 
@@ -61,6 +62,10 @@ LV_IMG_DECLARE(ui_img_wifi_2_png);    // assets/wifi_2.png
 LV_IMG_DECLARE(ui_img_wifi_3_png);    // assets/wifi_3.png
 LV_IMG_DECLARE(ui_img_wifi_4_png);    // assets/wifi_4.png
 LV_IMG_DECLARE(ui_img_wifi_off_png);    // assets/wifi_off.png
+
+// FONTS
+LV_FONT_DECLARE(ui_font_system);
+LV_FONT_DECLARE(ui_font_system20);
 
 // UI INIT
 void ui_init(void);

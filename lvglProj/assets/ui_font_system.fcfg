@@ -1,0 +1,16 @@
+{
+  "codename": "system",
+  "ttf_path": "/assets/微软雅黑.ttf",
+  "bin_path": "/assets\\ui_font_system.bin",
+  "c_path": "/assets\\ui_font_system.c",
+  "cfg_path": "/assets\\ui_font_system.fcfg",
+  "size": 16,
+  "bpp": 1,
+  "letters": 5,
+  "ranges": [
+    "0x20-0x7f"
+  ],
+  "symbols": "亮度蓝牙设置服务器关于信息地址端口账号密码认证本机呼号:",
+  "customparams": "--no-compress --no-prefilter",
+  "uploaded": false
+}

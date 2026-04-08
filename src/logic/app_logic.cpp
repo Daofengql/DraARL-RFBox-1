@@ -9,6 +9,7 @@
 #include "../drivers/ec11_driver.h"
 #include "../ui/ui.h"
 #include "connectivity_manager.h"
+#include "device_config.h"
 #include "edit_controller.h"
 
 // Backlight control is implemented in main.cpp.
@@ -93,7 +94,8 @@ void start_boot_sequence(uint32_t now_ms) {
     }
 
     // Turn on backlight only when startup begins.
-    updateBacklight(1.0f);
+    const float saved_backlight = static_cast<float>(device_config::load_backlight_pwm()) / 255.0f;
+    updateBacklight(saved_backlight);
 
     app_state = AppState::STARTUP_LOADING;
     startup_step_index = 0;

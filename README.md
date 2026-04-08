@@ -398,9 +398,10 @@ SA818 初始化默认为 `SA818_UHF`。
 | --- | --- | --- | --- |
 | `nvs` | data | `0x5000` | NVS 参数区 |
 | `otadata` | data | `0x2000` | OTA 元数据 |
-| `app0` | app | `0xCF0000` | 主应用固件 |
+| `app0` | app | `0x300000` | OTA 固件槽位 0 |
+| `app1` | app | `0x300000` | OTA 固件槽位 1 |
 | `coredump` | data | `0x10000` | 崩溃转储 |
-| `spiffs` | data | `0x2F0000` | SPIFFS 文件区 |
+| `spiffs` | data | `0x9E0000` | SPIFFS 文件区 |
 
 ## 编译与烧录
 

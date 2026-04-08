@@ -1,6 +1,7 @@
 #include "app_logic.h"
 
 #include <Arduino.h>
+#include <SPIFFS.h>
 #include <lvgl.h>
 
 #include <cstdlib>
@@ -25,21 +26,7 @@ namespace {
 constexpr uint32_t KEY_LONG_PRESS_MS = 1000;
 constexpr uint32_t STARTUP_STEP_INTERVAL_MS = 350;
 constexpr uint32_t CLOCK_REFRESH_INTERVAL_MS = 1000;
-
-struct StartupStep {
-    const char *message;
-    uint8_t progress;
-};
-
-constexpr StartupStep STARTUP_STEPS[] = {
-    {"[10%] Display pipeline ready", 10},
-    {"[25%] Audio codec initialized", 25},
-    {"[40%] RF module handshake OK", 40},
-    {"[55%] Loading local configuration", 55},
-    {"[75%] Network service startup", 75},
-    {"[90%] Runtime checks complete", 90},
-    {"[100%] Boot complete", 100},
-};
+constexpr size_t STARTUP_STEP_COUNT = 6;
 
 enum class AppState {
     POWER_WAIT = 0,
@@ -62,6 +49,30 @@ bool time_placeholder_rendered = false;
 lv_obj_t *settings_time_value_label = nullptr;
 bool timezone_initialized = false;
 
+bool init_spiffs_storage() {
+    if (SPIFFS.begin(false)) {
+        const size_t total_bytes = SPIFFS.totalBytes();
+        const size_t used_bytes = SPIFFS.usedBytes();
+        Serial.printf("[SPIFFS] mounted. total=%u used=%u\n",
+                      static_cast<unsigned int>(total_bytes),
+                      static_cast<unsigned int>(used_bytes));
+        return true;
+    }
+
+    Serial.println("[SPIFFS] mount failed, formatting...");
+    if (!SPIFFS.begin(true)) {
+        Serial.println("[SPIFFS] format+mount failed.");
+        return false;
+    }
+
+    const size_t total_bytes = SPIFFS.totalBytes();
+    const size_t used_bytes = SPIFFS.usedBytes();
+    Serial.printf("[SPIFFS] formatted and mounted. total=%u used=%u\n",
+                  static_cast<unsigned int>(total_bytes),
+                  static_cast<unsigned int>(used_bytes));
+    return true;
+}
+
 void append_startup_log(const char *message) {
     if (!ui_startinfo) {
         return;
@@ -70,6 +81,15 @@ void append_startup_log(const char *message) {
     lv_textarea_add_text(ui_startinfo, message);
     lv_textarea_add_text(ui_startinfo, "\n");
     lv_textarea_set_cursor_pos(ui_startinfo, LV_TEXTAREA_CURSOR_LAST);
+}
+
+void set_startup_progress(uint8_t progress, const char *message) {
+    if (ui_processstat) {
+        lv_bar_set_value(ui_processstat, progress, LV_ANIM_OFF);
+    }
+    if (message && message[0] != '\0') {
+        append_startup_log(message);
+    }
 }
 
 void set_time_label_if_present(lv_obj_t *label, const char *text) {
@@ -206,7 +226,7 @@ void prepare_startup_screen() {
         lv_bar_set_value(ui_processstat, 0, LV_ANIM_OFF);
     }
 
-    append_startup_log("Power key accepted, booting...");
+    append_startup_log("Power key accepted. Starting boot...");
 }
 
 void start_boot_sequence(uint32_t now_ms) {
@@ -223,19 +243,7 @@ void start_boot_sequence(uint32_t now_ms) {
     startup_next_step_at_ms = now_ms;
 
     prepare_startup_screen();
-    const bool radio_ok = edit_controller_boot_radio_init();
-    if (radio_ok) {
-        append_startup_log("SA818 initialized and config synced.");
-    } else {
-        append_startup_log("SA818 init/config failed.");
-    }
-    connectivity_manager_init();
-    append_startup_log("WiFi subsystem initialized.");
-
-    const bool net_audio_ok = net_audio_link_init();
-    append_startup_log(net_audio_ok
-        ? "NET audio link initialized."
-        : "NET audio link init failed.");
+    set_startup_progress(5, "[5%] Startup screen ready");
     Serial.println("Boot sequence started.");
 }
 
@@ -256,19 +264,57 @@ void update_startup_sequence(uint32_t now_ms) {
         return;
     }
 
-    if (startup_step_index < (sizeof(STARTUP_STEPS) / sizeof(STARTUP_STEPS[0]))) {
-        const StartupStep &step = STARTUP_STEPS[startup_step_index++];
-
-        append_startup_log(step.message);
-        if (ui_processstat) {
-            lv_bar_set_value(ui_processstat, step.progress, LV_ANIM_OFF);
-        }
-
-        startup_next_step_at_ms = now_ms + STARTUP_STEP_INTERVAL_MS;
+    if (startup_step_index >= STARTUP_STEP_COUNT) {
+        enter_main_screen();
         return;
     }
 
-    enter_main_screen();
+    switch (startup_step_index) {
+        case 0: {
+            const bool radio_ok = edit_controller_boot_radio_init();
+            set_startup_progress(radio_ok ? 25 : 20,
+                                 radio_ok
+                                     ? "[25%] RF module ready, config synced"
+                                     : "[20%] RF module init failed");
+            break;
+        }
+        case 1: {
+            const bool spiffs_ok = init_spiffs_storage();
+            set_startup_progress(spiffs_ok
+                                     ? 40
+                                     : 35,
+                                 spiffs_ok
+                                     ? "[40%] SPIFFS mounted"
+                                     : "[35%] SPIFFS init failed");
+            break;
+        }
+        case 2:
+            connectivity_manager_init();
+            set_startup_progress(60, "[60%] Connectivity manager initialized");
+            break;
+        case 3: {
+            const bool net_audio_ok = net_audio_link_init();
+            set_startup_progress(net_audio_ok
+                                     ? 80
+                                     : 75,
+                                 net_audio_ok
+                                     ? "[80%] NET audio link initialized"
+                                     : "[75%] NET audio link init failed");
+            break;
+        }
+        case 4:
+            refresh_time_widgets(true);
+            set_startup_progress(95, "[95%] Runtime checks complete");
+            break;
+        case 5:
+            set_startup_progress(100, "[100%] Boot complete, entering main screen");
+            break;
+        default:
+            break;
+    }
+
+    ++startup_step_index;
+    startup_next_step_at_ms = now_ms + STARTUP_STEP_INTERVAL_MS;
 }
 
 void update_power_key(uint32_t now_ms) {

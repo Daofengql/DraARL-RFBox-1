@@ -31,6 +31,7 @@ extern "C" {
 #include "ui_main.h"
 #include "ui_SettingPAGE.h"
 #include "ui_InfoPage.h"
+#include "ui_RFPAGE.h"
 
 ///////////////////// VARIABLES ////////////////////
 

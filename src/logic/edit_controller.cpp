@@ -14,6 +14,7 @@
 #include "../ui/ui.h"
 #include "connectivity_manager.h"
 #include "device_config.h"
+#include "net_audio_link.h"
 
 // Backlight control is implemented in main.cpp.
 extern void updateBacklight(float level);
@@ -51,6 +52,7 @@ enum class EditMode {
 enum class SettingsCursor : uint8_t {
     BRIGHTNESS = 0,
     BLE,
+    RF,
     ABOUT,
 };
 
@@ -95,18 +97,21 @@ SubAudioSetting tx_subaudio = {SubAudioType::CTCSS, 7};  // 88.5
 SubAudioSetting rx_subaudio = {SubAudioType::CTCSS, 7};  // 88.5
 SA818Squelch radio_squelch = SA818Squelch::SQ_4;
 bool radio_wide_band = false;
+bool radio_power_high = true;
 
 uint8_t digit_positions[16] = {};
 uint8_t digit_count = 0;
 int8_t editing_digit_index = -1;
 
 bool sql_rx_active = false;
+bool net_bridge_active = false;
 bool radio_cfg_dirty = false;
 lv_obj_t *save_overlay = nullptr;
 uint8_t backlight_pwm = device_config::BACKLIGHT_PWM_MAX;
 SettingsCursor settings_cursor = SettingsCursor::BRIGHTNESS;
 SettingsMode settings_mode = SettingsMode::NONE;
 bool info_preselect_active = false;
+bool rf_select_active = false;
 uint32_t last_settings_ble_refresh_ms = 0;
 uint32_t last_info_refresh_ms = 0;
 
@@ -121,6 +126,7 @@ enum class ActiveScreen : uint8_t {
     UNKNOWN = 0,
     MAIN,
     SETTINGS,
+    RF,
     INFO,
 };
 
@@ -131,6 +137,9 @@ ActiveScreen get_active_screen() {
     }
     if (active == ui_SettingPAGE) {
         return ActiveScreen::SETTINGS;
+    }
+    if (active == ui_RFPAGE) {
+        return ActiveScreen::RF;
     }
     if (active == ui_InfoPage) {
         return ActiveScreen::INFO;
@@ -251,7 +260,7 @@ void log_radio_config(const char *tag) {
     format_subaudio_text_compact(tx_subaudio, tx_tone, sizeof(tx_tone));
     format_subaudio_text_compact(rx_subaudio, rx_tone, sizeof(rx_tone));
 
-    Serial.printf("[RADIO][%s] TX=%s RX=%s TXTone=%s RXTone=%s SQL=%u BW=%s dirty=%d\n",
+    Serial.printf("[RADIO][%s] TX=%s RX=%s TXTone=%s RXTone=%s SQL=%u BW=%s PWR=%s dirty=%d\n",
                   tag ? tag : "LOG",
                   tx_freq,
                   rx_freq,
@@ -259,6 +268,7 @@ void log_radio_config(const char *tag) {
                   rx_tone,
                   static_cast<unsigned int>(radio_squelch),
                   radio_wide_band ? "wide" : "narrow",
+                  radio_power_high ? "high" : "low",
                   radio_cfg_dirty ? 1 : 0);
 }
 
@@ -430,6 +440,8 @@ bool apply_all_radio_config_to_sa818() {
         return false;
     }
 
+    sa818_set_power(radio_power_high ? SA818Power::POWER_HIGH : SA818Power::POWER_LOW);
+
     char tx_sub[8] = {0};
     char rx_sub[8] = {0};
     build_subaudio_string(tx_subaudio, tx_sub, sizeof(tx_sub));
@@ -454,6 +466,7 @@ device_config::RadioConfig build_radio_config_snapshot() {
     config.rx_subaudio = rx_subaudio;
     config.squelch = static_cast<uint8_t>(radio_squelch);
     config.wide_band = radio_wide_band;
+    config.power_high = radio_power_high;
     return config;
 }
 
@@ -469,6 +482,7 @@ void apply_runtime_radio_config(const device_config::RadioConfig &config) {
     }
     radio_squelch = static_cast<SA818Squelch>(sql);
     radio_wide_band = config.wide_band;
+    radio_power_high = config.power_high;
 }
 
 void load_radio_config_from_storage() {
@@ -541,6 +555,7 @@ void save_and_apply_radio_config() {
         Serial.println("Radio config saved.");
         radio_cfg_dirty = false;
         log_radio_config("SAVED");
+        net_audio_link_schedule_radio_config_sync();
     }
 
     if (sa818_is_enabled() && !apply_all_radio_config_to_sa818()) {
@@ -593,6 +608,12 @@ void update_info_panel_state() {
             break;
         case EditStage::NONE:
         default:
+            if (net_bridge_active) {
+                lv_obj_set_style_bg_color(ui_infoPanel, lv_color_hex(INFO_PANEL_COLOR_TX), LV_PART_MAIN | LV_STATE_DEFAULT);
+                lv_obj_set_style_bg_opa(ui_infoPanel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+                lv_label_set_text(ui_Info, "NET->RF");
+                break;
+            }
             lv_obj_set_style_bg_color(
                 ui_infoPanel,
                 lv_color_hex(sql_rx_active ? INFO_PANEL_COLOR_RX : INFO_PANEL_COLOR_IDLE),
@@ -871,6 +892,55 @@ void apply_backlight_pwm(uint8_t pwm, bool persist) {
     }
 }
 
+bool save_radio_config_immediately(bool schedule_sync) {
+    if (!save_radio_config_to_storage()) {
+        Serial.println("Radio config immediate save failed.");
+        log_radio_config("IMMEDIATE_SAVE_FAIL");
+        return false;
+    }
+
+    radio_cfg_dirty = false;
+
+    if (schedule_sync) {
+        net_audio_link_schedule_radio_config_sync();
+    }
+
+    log_radio_config("IMMEDIATE_SAVE");
+    return true;
+}
+
+void refresh_rf_page_widgets() {
+    hide_header_update_indicators();
+
+    if (ui_BLES1) {
+        if (radio_power_high) {
+            lv_obj_add_state(ui_BLES1, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(ui_BLES1, LV_STATE_CHECKED);
+        }
+    }
+
+    set_label_text_or_empty(ui_BLEN1, radio_power_high ? "高" : "低");
+
+    clear_selection_border(ui_BLEP1);
+    if (rf_select_active) {
+        apply_selection_border(ui_BLEP1, HIGHLIGHT_COLOR_SELECT, 2);
+    }
+}
+
+void set_radio_power_high(bool high, bool persist, bool schedule_sync) {
+    radio_power_high = high;
+    if (sa818_is_enabled()) {
+        sa818_set_power(radio_power_high ? SA818Power::POWER_HIGH : SA818Power::POWER_LOW);
+    }
+
+    if (persist) {
+        save_radio_config_immediately(schedule_sync);
+    }
+
+    refresh_rf_page_widgets();
+}
+
 void refresh_settings_ble_widgets() {
     const bool ble_enabled = connectivity_manager_is_ble_enabled();
     if (ui_BLES) {
@@ -890,6 +960,7 @@ void refresh_settings_ble_widgets() {
 void refresh_settings_selection_state() {
     clear_selection_border(ui_lightP);
     clear_selection_border(ui_BLEP);
+    clear_selection_border(ui_RFP);
     clear_selection_border(ui_InfoP);
 
     if (settings_mode == SettingsMode::NONE) {
@@ -903,6 +974,9 @@ void refresh_settings_selection_state() {
             break;
         case SettingsCursor::BLE:
             target = ui_BLEP;
+            break;
+        case SettingsCursor::RF:
+            target = ui_RFP;
             break;
         case SettingsCursor::ABOUT:
             target = ui_InfoP;
@@ -1008,6 +1082,27 @@ void close_info_page_to_settings() {
     refresh_settings_page_widgets();
 }
 
+void open_rf_page() {
+    if (!ui_RFPAGE) {
+        return;
+    }
+
+    rf_select_active = false;
+    refresh_rf_page_widgets();
+    lv_disp_load_scr(ui_RFPAGE);
+    refresh_rf_page_widgets();
+}
+
+void close_rf_page_to_settings() {
+    if (!ui_SettingPAGE) {
+        return;
+    }
+
+    rf_select_active = false;
+    lv_disp_load_scr(ui_SettingPAGE);
+    refresh_settings_page_widgets();
+}
+
 void close_settings_page_to_main() {
     if (!ui_main) {
         return;
@@ -1015,6 +1110,7 @@ void close_settings_page_to_main() {
 
     settings_mode = SettingsMode::NONE;
     settings_cursor = SettingsCursor::BRIGHTNESS;
+    rf_select_active = false;
     lv_disp_load_scr(ui_main);
     exit_edit_session();
     apply_main_screen_overrides();
@@ -1029,6 +1125,7 @@ void open_settings_page() {
     settings_mode = SettingsMode::NONE;
     settings_cursor = SettingsCursor::BRIGHTNESS;
     info_preselect_active = false;
+    rf_select_active = false;
     refresh_settings_page_widgets();
     lv_disp_load_scr(ui_SettingPAGE);
     refresh_settings_page_widgets();
@@ -1040,7 +1137,7 @@ void move_settings_cursor(int32_t delta) {
     }
 
     int32_t cursor = static_cast<int32_t>(settings_cursor) + delta;
-    constexpr int32_t SETTINGS_ITEM_COUNT = 3;
+    constexpr int32_t SETTINGS_ITEM_COUNT = 4;
     cursor %= SETTINGS_ITEM_COUNT;
     if (cursor < 0) {
         cursor += SETTINGS_ITEM_COUNT;
@@ -1072,6 +1169,20 @@ void toggle_ble_from_settings() {
     refresh_settings_ble_widgets();
 }
 
+void toggle_radio_power_from_rf_page() {
+    set_radio_power_high(!radio_power_high, true, true);
+}
+
+void on_rf_button_click() {
+    if (!rf_select_active) {
+        rf_select_active = true;
+        refresh_rf_page_widgets();
+        return;
+    }
+
+    toggle_radio_power_from_rf_page();
+}
+
 void on_settings_button_click() {
     switch (settings_mode) {
         case SettingsMode::NONE:
@@ -1088,6 +1199,10 @@ void on_settings_button_click() {
                 case SettingsCursor::BLE:
                     toggle_ble_from_settings();
                     break;
+                case SettingsCursor::RF:
+                    settings_mode = SettingsMode::NONE;
+                    open_rf_page();
+                    break;
                 case SettingsCursor::ABOUT:
                     settings_mode = SettingsMode::NONE;
                     open_info_page();
@@ -1103,6 +1218,16 @@ void on_settings_button_click() {
         default:
             break;
     }
+}
+
+void on_rf_key0_short_press() {
+    if (rf_select_active) {
+        rf_select_active = false;
+        refresh_rf_page_widgets();
+        return;
+    }
+
+    close_rf_page_to_settings();
 }
 
 void on_settings_key0_short_press() {
@@ -1267,6 +1392,9 @@ void hide_header_update_indicators() {
     if (ui_hasNewUpdate) {
         lv_obj_add_flag(ui_hasNewUpdate, LV_OBJ_FLAG_HIDDEN);
     }
+    if (ui_hasNewUpdate1) {
+        lv_obj_add_flag(ui_hasNewUpdate1, LV_OBJ_FLAG_HIDDEN);
+    }
     if (ui_hasNewUpdate2) {
         lv_obj_add_flag(ui_hasNewUpdate2, LV_OBJ_FLAG_HIDDEN);
     }
@@ -1283,6 +1411,7 @@ void edit_controller_init() {
     log_radio_config("LOADED");
     set_edit_stage(EditStage::NONE);
     refresh_settings_page_widgets();
+    refresh_rf_page_widgets();
 }
 
 void edit_controller_on_enter_main_screen() {
@@ -1290,6 +1419,8 @@ void edit_controller_on_enter_main_screen() {
     settings_mode = SettingsMode::NONE;
     settings_cursor = SettingsCursor::BRIGHTNESS;
     info_preselect_active = false;
+    rf_select_active = false;
+    net_bridge_active = false;
     exit_edit_session();
 }
 
@@ -1342,6 +1473,10 @@ void edit_controller_update() {
         last_info_refresh_ms = 0;
     }
 
+    if (screen == ActiveScreen::RF) {
+        refresh_rf_page_widgets();
+    }
+
     if (!sa818_is_enabled()) {
         return;
     }
@@ -1388,6 +1523,23 @@ void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
     if (screen == ActiveScreen::INFO) {
         if (event == EC11Event::BUTTON_CLICK) {
             on_info_button_click();
+        }
+        return;
+    }
+
+    if (screen == ActiveScreen::RF) {
+        switch (event) {
+            case EC11Event::ROTATE_CW:
+            case EC11Event::ROTATE_CCW:
+                if (rf_select_active) {
+                    toggle_radio_power_from_rf_page();
+                }
+                break;
+            case EC11Event::BUTTON_CLICK:
+                on_rf_button_click();
+                break;
+            default:
+                break;
         }
         return;
     }
@@ -1461,6 +1613,11 @@ void edit_controller_on_key0_short_press() {
         return;
     }
 
+    if (screen == ActiveScreen::RF) {
+        on_rf_key0_short_press();
+        return;
+    }
+
     if (screen != ActiveScreen::MAIN) {
         return;
     }
@@ -1483,6 +1640,7 @@ bool edit_controller_set_radio_config(const device_config::RadioConfig &config, 
             Serial.println("External radio config save failed.");
             log_radio_config("EXT_SAVE_FAIL");
             refresh_edit_widgets();
+            refresh_rf_page_widgets();
             return false;
         }
         radio_cfg_dirty = false;
@@ -1498,5 +1656,15 @@ bool edit_controller_set_radio_config(const device_config::RadioConfig &config, 
 
     log_radio_config("EXT_APPLY");
     refresh_edit_widgets();
+    refresh_rf_page_widgets();
     return ok;
+}
+
+void edit_controller_set_network_bridge_active(bool active) {
+    if (net_bridge_active == active) {
+        return;
+    }
+
+    net_bridge_active = active;
+    refresh_edit_widgets();
 }

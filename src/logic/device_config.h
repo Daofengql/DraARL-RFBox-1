@@ -48,11 +48,13 @@ struct RadioConfig {
     SubAudioSetting rx_subaudio;
     uint8_t squelch;
     bool wide_band;
+    bool power_high;
 };
 
 struct ServerConfig {
     char callsign[CALLSIGN_MAX_LEN + 1];
     uint8_t node_ssid;
+    uint32_t dmr_id;
     char udp_host[HOST_MAX_LEN + 1];
     uint16_t udp_port;
     char http_api_base_url[URL_MAX_LEN + 1];
@@ -78,6 +80,7 @@ bool save_radio(const RadioConfig &config);
 bool save_server(const ServerConfig &config);
 
 bool has_wifi_credentials(const WiFiConfig &config);
+bool is_valid_device_node_ssid(uint8_t ssid);
 uint8_t sanitize_backlight_pwm(uint8_t pwm);
 uint8_t load_backlight_pwm();
 bool save_backlight_pwm(uint8_t pwm);

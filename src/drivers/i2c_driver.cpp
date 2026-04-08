@@ -53,3 +53,25 @@ bool i2c_device_exists(uint8_t dev_addr) {
     Wire.beginTransmission(dev_addr);
     return Wire.endTransmission() == 0;
 }
+
+size_t i2c_scan_bus(void) {
+    if (!i2c_initialized) {
+        Serial.println("[I2C] scan skipped: bus not initialized.");
+        return 0;
+    }
+
+    Serial.println("[I2C] scan start");
+
+    size_t found_count = 0;
+    for (uint8_t addr = 1; addr < 0x7F; ++addr) {
+        Wire.beginTransmission(addr);
+        const uint8_t result = Wire.endTransmission();
+        if (result == 0) {
+            ++found_count;
+            Serial.printf("[I2C] found device at 0x%02X\n", static_cast<unsigned int>(addr));
+        }
+    }
+
+    Serial.printf("[I2C] scan done, found=%u\n", static_cast<unsigned int>(found_count));
+    return found_count;
+}

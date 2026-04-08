@@ -10,7 +10,7 @@
   "ranges": [
     "0x20-0x7f"
   ],
-  "symbols": "亮度蓝牙设置服务器关于信息地址端口账号密码认证本机呼号:",
+  "symbols": "亮度蓝牙设置服务器关于信息地址端口账号密码认证本机呼号时间:射频功率高低高级",
   "customparams": "--no-compress --no-prefilter",
   "uploaded": false
 }

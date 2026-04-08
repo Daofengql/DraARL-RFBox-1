@@ -14,5 +14,6 @@ void edit_controller_on_encoder_event(EC11Event event, int32_t value);
 void edit_controller_on_key0_short_press();
 void edit_controller_get_radio_config(device_config::RadioConfig &config);
 bool edit_controller_set_radio_config(const device_config::RadioConfig &config, bool persist);
+void edit_controller_set_network_bridge_active(bool active);
 
 #endif // EDIT_CONTROLLER_H

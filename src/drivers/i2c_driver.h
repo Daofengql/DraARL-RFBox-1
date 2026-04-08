@@ -63,4 +63,10 @@ bool i2c_read_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t *value);
  */
 bool i2c_device_exists(uint8_t dev_addr);
 
+/**
+ * @brief 扫描 I2C 总线上的所有设备并输出日志
+ * @return 检测到的设备数量
+ */
+size_t i2c_scan_bus(void);
+
 #endif // I2C_DRIVER_H

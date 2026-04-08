@@ -6,6 +6,8 @@
 #include "logic/app_logic.h"
 #include "ui/ui.h"
 
+SET_LOOP_TASK_STACK_SIZE(32768);
+
 static lv_disp_draw_buf_t draw_buf;
 static lv_disp_drv_t disp_drv;
 

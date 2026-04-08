@@ -37,6 +37,7 @@ void ui_init(void)
     ui_main_screen_init();
     ui_SettingPAGE_screen_init();
     ui_InfoPage_screen_init();
+    ui_RFPAGE_screen_init();
     ui____initial_actions0 = lv_obj_create(NULL);
     lv_disp_load_scr(ui_StartUP);
 }
@@ -47,4 +48,5 @@ void ui_destroy(void)
     ui_main_screen_destroy();
     ui_SettingPAGE_screen_destroy();
     ui_InfoPage_screen_destroy();
+    ui_RFPAGE_screen_destroy();
 }

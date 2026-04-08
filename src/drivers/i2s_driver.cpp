@@ -18,10 +18,11 @@ bool i2s_driver_init(void) {
         .dma_buf_len = I2S_DMA_BUF_LEN,
         .use_apll = true,
         .tx_desc_auto_clear = true,
-        .fixed_mclk = 0,
+        .fixed_mclk = static_cast<int>(I2S_SAMPLE_RATE * 256U),
     };
 
     i2s_pin_config_t pin_config = {
+        .mck_io_num = I2S_MCLK,
         .bck_io_num = I2S_BCLK,
         .ws_io_num = I2S_WS,
         .data_out_num = I2S_DOUT,
@@ -39,6 +40,12 @@ bool i2s_driver_init(void) {
         return false;
     }
 
+    ret = i2s_set_clk(I2S_PORT_NUM, I2S_SAMPLE_RATE, 16, I2S_CHANNEL_STEREO);
+    if (ret != ESP_OK) {
+        i2s_driver_uninstall(I2S_PORT_NUM);
+        return false;
+    }
+
     // 清空 DMA 缓冲区
     i2s_zero_dma_buffer(I2S_PORT_NUM);
 
@@ -50,6 +57,11 @@ void i2s_driver_deinit(void) {
 }
 
 bool i2s_write(const void *data, size_t len, size_t *bytes_written) {
+    size_t local_bytes_written = 0;
+    if (!bytes_written) {
+        bytes_written = &local_bytes_written;
+    }
+
     if (is_muted) {
         *bytes_written = len;
         return true;
@@ -64,23 +76,27 @@ bool i2s_write(const void *data, size_t len, size_t *bytes_written) {
             for (size_t i = 0; i < len / 2; i++) {
                 samples[i] = (int16_t)(samples[i] * scale);
             }
-            esp_err_t ret = i2s_write_expand(I2S_PORT_NUM, samples, len, 16, 32, bytes_written, portMAX_DELAY);
+            esp_err_t ret = ::i2s_write(I2S_PORT_NUM, samples, len, bytes_written, portMAX_DELAY);
             free(samples);
             return ret == ESP_OK;
         }
     }
 
-    esp_err_t ret = i2s_write_expand(I2S_PORT_NUM, data, len, 16, 32, bytes_written, portMAX_DELAY);
+    esp_err_t ret = ::i2s_write(I2S_PORT_NUM, data, len, bytes_written, portMAX_DELAY);
     return ret == ESP_OK;
 }
 
 bool i2s_read(void *data, size_t len, size_t *bytes_read) {
-    esp_err_t ret = i2s_read(I2S_PORT_NUM, data, len, bytes_read, portMAX_DELAY);
+    size_t local_bytes_read = 0;
+    if (!bytes_read) {
+        bytes_read = &local_bytes_read;
+    }
+    esp_err_t ret = ::i2s_read(I2S_PORT_NUM, data, len, bytes_read, portMAX_DELAY);
     return ret == ESP_OK;
 }
 
 void i2s_set_sample_rate(uint32_t rate) {
-    i2s_set_sample_rates(I2S_PORT_NUM, rate);
+    i2s_set_clk(I2S_PORT_NUM, rate, 16, I2S_CHANNEL_STEREO);
 }
 
 void i2s_set_volume(uint8_t volume) {

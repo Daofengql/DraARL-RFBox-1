@@ -6,7 +6,7 @@
 
 // I2S 配置参数
 #define I2S_PORT_NUM        I2S_NUM_0
-#define I2S_SAMPLE_RATE     44100
+#define I2S_SAMPLE_RATE     16000
 #define I2S_BITS_PER_SAMPLE I2S_BITS_PER_SAMPLE_16BIT
 #define I2S_DMA_BUF_COUNT   8
 #define I2S_DMA_BUF_LEN     256

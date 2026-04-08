@@ -2,6 +2,7 @@ SET(SOURCES ui_StartUP.c
     ui_main.c
     ui_SettingPAGE.c
     ui_InfoPage.c
+    ui_RFPAGE.c
     ui.c
     ui_comp_hook.c
     ui_helpers.c

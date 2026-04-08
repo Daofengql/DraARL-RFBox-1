@@ -9,7 +9,7 @@ namespace {
 constexpr char CONFIG_NS[] = "device_cfg";
 constexpr char DEFAULT_SERVER_UDP_HOST[] = "ptt.4l2.cn";
 constexpr uint16_t DEFAULT_SERVER_UDP_PORT = 60050;
-constexpr char DEFAULT_SERVER_HTTP_API_BASE_URL[] = "https://ptt.4l2.cn/";
+constexpr char DEFAULT_SERVER_HTTP_API_BASE_URL[] = "https://ptt.4l2.cn";
 constexpr char BACKLIGHT_KEY[] = "ui_bl";
 
 template <size_t N>
@@ -74,8 +74,11 @@ void sanitize_server_config(ServerConfig &config) {
     config.account[ACCOUNT_MAX_LEN] = '\0';
     config.device_auth_password[PASSWORD_MAX_LEN] = '\0';
 
-    if (config.node_ssid > 15) {
+    if (config.node_ssid != 0 && !is_valid_device_node_ssid(config.node_ssid)) {
         config.node_ssid = 0;
+    }
+    if (config.dmr_id > 0xFFFFFFUL) {
+        config.dmr_id = 0;
     }
 
     if (config.udp_host[0] == '\0') {
@@ -112,6 +115,7 @@ void load_radio_config(Preferences &prefs, RadioConfig &config) {
     config.rx_subaudio.index = prefs.getUChar("radio_rxi", config.rx_subaudio.index);
     config.squelch = prefs.getUChar("radio_sql", config.squelch);
     config.wide_band = prefs.getBool("radio_bw", config.wide_band);
+    config.power_high = prefs.getBool("radio_pwr", config.power_high);
     sanitize_radio_config(config);
 }
 
@@ -119,6 +123,7 @@ void load_server_config(Preferences &prefs, ServerConfig &config) {
     set_defaults(config);
     load_optional_string(prefs, "svr_call", config.callsign, sizeof(config.callsign));
     config.node_ssid = prefs.getUChar("svr_ssid", 0);
+    config.dmr_id = prefs.getULong("svr_dmr", 0);
     load_optional_string(prefs, "svr_udp_h", config.udp_host, sizeof(config.udp_host));
     config.udp_port = prefs.getUShort("svr_udp_p", 0);
     load_optional_string(prefs, "svr_http", config.http_api_base_url, sizeof(config.http_api_base_url));
@@ -147,11 +152,13 @@ void set_defaults(RadioConfig &config) {
     config.rx_subaudio = {SubAudioType::CTCSS, 7};
     config.squelch = 4;
     config.wide_band = false;
+    config.power_high = true;
 }
 
 void set_defaults(ServerConfig &config) {
     memset(&config, 0, sizeof(config));
     config.node_ssid = 0;
+    config.dmr_id = 0;
     copy_cstr(config.udp_host, DEFAULT_SERVER_UDP_HOST);
     config.udp_port = DEFAULT_SERVER_UDP_PORT;
     copy_cstr(config.http_api_base_url, DEFAULT_SERVER_HTTP_API_BASE_URL);
@@ -198,9 +205,11 @@ bool save(const DeviceConfig &config) {
     prefs.putUChar("radio_rxi", config.radio.rx_subaudio.index);
     prefs.putUChar("radio_sql", config.radio.squelch);
     prefs.putBool("radio_bw", config.radio.wide_band);
+    prefs.putBool("radio_pwr", config.radio.power_high);
 
     prefs.putString("svr_call", config.server.callsign);
     prefs.putUChar("svr_ssid", config.server.node_ssid);
+    prefs.putULong("svr_dmr", config.server.dmr_id);
     prefs.putString("svr_udp_h", config.server.udp_host);
     prefs.putUShort("svr_udp_p", config.server.udp_port);
     prefs.putString("svr_http", config.server.http_api_base_url);
@@ -237,6 +246,10 @@ bool save_server(const ServerConfig &config) {
 
 bool has_wifi_credentials(const WiFiConfig &config) {
     return config.ssid[0] != '\0';
+}
+
+bool is_valid_device_node_ssid(uint8_t ssid) {
+    return (ssid >= 1 && ssid <= 99) || (ssid >= 106 && ssid <= 235);
 }
 
 uint8_t sanitize_backlight_pwm(uint8_t pwm) {

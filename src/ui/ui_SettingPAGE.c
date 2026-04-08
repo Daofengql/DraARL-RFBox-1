@@ -13,6 +13,11 @@ lv_obj_t * ui_BLEP = NULL;
 lv_obj_t * ui_Label2 = NULL;
 lv_obj_t * ui_BLES = NULL;
 lv_obj_t * ui_BLEN = NULL;
+lv_obj_t * ui_TimeP = NULL;
+lv_obj_t * ui_Label6 = NULL;
+lv_obj_t * ui_RFP = NULL;
+lv_obj_t * ui_Label7 = NULL;
+lv_obj_t * ui_Label9 = NULL;
 lv_obj_t * ui_InfoP = NULL;
 lv_obj_t * ui_Label3 = NULL;
 lv_obj_t * ui_Label4 = NULL;
@@ -35,7 +40,7 @@ void ui_SettingPAGE_screen_init(void)
     lv_obj_set_width(ui_lightP, 310);
     lv_obj_set_height(ui_lightP, 30);
     lv_obj_set_x(ui_lightP, 0);
-    lv_obj_set_y(ui_lightP, -65);
+    lv_obj_set_y(ui_lightP, -71);
     lv_obj_set_align(ui_lightP, LV_ALIGN_CENTER);
     lv_obj_clear_flag(ui_lightP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
@@ -61,7 +66,7 @@ void ui_SettingPAGE_screen_init(void)
     lv_obj_set_width(ui_BLEP, 310);
     lv_obj_set_height(ui_BLEP, 40);
     lv_obj_set_x(ui_BLEP, 0);
-    lv_obj_set_y(ui_BLEP, -25);
+    lv_obj_set_y(ui_BLEP, -33);
     lv_obj_set_align(ui_BLEP, LV_ALIGN_CENTER);
     lv_obj_clear_flag(ui_BLEP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
@@ -87,18 +92,60 @@ void ui_SettingPAGE_screen_init(void)
     lv_obj_set_align(ui_BLEN, LV_ALIGN_CENTER);
     lv_label_set_text(ui_BLEN, "DraARL-100000");
 
+    ui_TimeP = lv_obj_create(ui_SettingPAGE);
+    lv_obj_set_width(ui_TimeP, 310);
+    lv_obj_set_height(ui_TimeP, 40);
+    lv_obj_set_x(ui_TimeP, 0);
+    lv_obj_set_y(ui_TimeP, 10);
+    lv_obj_set_align(ui_TimeP, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_TimeP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_Label6 = lv_label_create(ui_TimeP);
+    lv_obj_set_width(ui_Label6, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Label6, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Label6, -125);
+    lv_obj_set_y(ui_Label6, 0);
+    lv_obj_set_align(ui_Label6, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Label6, "时间:");
+    lv_obj_set_style_text_font(ui_Label6, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_RFP = lv_obj_create(ui_SettingPAGE);
+    lv_obj_set_width(ui_RFP, 310);
+    lv_obj_set_height(ui_RFP, 40);
+    lv_obj_set_x(ui_RFP, 0);
+    lv_obj_set_y(ui_RFP, 53);
+    lv_obj_set_align(ui_RFP, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_RFP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_Label7 = lv_label_create(ui_RFP);
+    lv_obj_set_width(ui_Label7, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Label7, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Label7, -93);
+    lv_obj_set_y(ui_Label7, 0);
+    lv_obj_set_align(ui_Label7, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Label7, "高级射频设置:");
+    lv_obj_set_style_text_font(ui_Label7, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_Label9 = lv_label_create(ui_RFP);
+    lv_obj_set_width(ui_Label9, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Label9, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Label9, 135);
+    lv_obj_set_y(ui_Label9, 0);
+    lv_obj_set_align(ui_Label9, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Label9, ">");
+
     ui_InfoP = lv_obj_create(ui_SettingPAGE);
     lv_obj_set_width(ui_InfoP, 310);
     lv_obj_set_height(ui_InfoP, 40);
     lv_obj_set_x(ui_InfoP, 0);
-    lv_obj_set_y(ui_InfoP, 95);
+    lv_obj_set_y(ui_InfoP, 96);
     lv_obj_set_align(ui_InfoP, LV_ALIGN_CENTER);
     lv_obj_clear_flag(ui_InfoP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
     ui_Label3 = lv_label_create(ui_InfoP);
     lv_obj_set_width(ui_Label3, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_Label3, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_Label3, -112);
+    lv_obj_set_x(ui_Label3, -110);
     lv_obj_set_y(ui_Label3, 0);
     lv_obj_set_align(ui_Label3, LV_ALIGN_CENTER);
     lv_label_set_text(ui_Label3, "关于本机:");
@@ -186,6 +233,11 @@ void ui_SettingPAGE_screen_destroy(void)
     ui_Label2 = NULL;
     ui_BLES = NULL;
     ui_BLEN = NULL;
+    ui_TimeP = NULL;
+    ui_Label6 = NULL;
+    ui_RFP = NULL;
+    ui_Label7 = NULL;
+    ui_Label9 = NULL;
     ui_InfoP = NULL;
     ui_Label3 = NULL;
     ui_Label4 = NULL;

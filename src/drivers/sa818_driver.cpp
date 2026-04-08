@@ -188,9 +188,8 @@ bool sa818_init(SA818Type type) {
     digitalWrite(SA818_PTT, 1);  // HIGH - 默认不发射
 
     // SA818_PW: 低电平低功率, 高阻态高功率
-    // 使用开漏模式实现高阻态
-    pinMode(SA818_PW, OUTPUT_OPEN_DRAIN);
-    digitalWrite(SA818_PW, 1);  // HIGH - 默认高功率
+    // 使用开漏模式实现高阻态，并复用当前运行态的功率设置。
+    sa818_set_power(current_power);
 
     // 初始化 UART
     if (!uart_driver_init()) {

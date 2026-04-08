@@ -39,6 +39,8 @@ void ui_main_screen_init(void)
     lv_obj_remove_style_all(ui_mainContainer);
     lv_obj_set_width(ui_mainContainer, 320);
     lv_obj_set_height(ui_mainContainer, 220);
+    lv_obj_set_x(ui_mainContainer, 0);
+    lv_obj_set_y(ui_mainContainer, -20);
     lv_obj_set_align(ui_mainContainer, LV_ALIGN_CENTER);
     lv_obj_clear_flag(ui_mainContainer, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 

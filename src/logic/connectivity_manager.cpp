@@ -17,6 +17,7 @@
 #include "../ui/ui.h"
 #include "device_config.h"
 #include "edit_controller.h"
+#include "net_audio_link.h"
 
 namespace {
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
@@ -177,6 +178,9 @@ void refresh_status_icons() {
     if (ui_wifistat) {
         lv_img_set_src(ui_wifistat, current_wifi_icon());
     }
+    if (ui_wifistat1) {
+        lv_img_set_src(ui_wifistat1, current_wifi_icon());
+    }
     if (ui_wifistat2) {
         lv_img_set_src(ui_wifistat2, current_wifi_icon());
     }
@@ -185,6 +189,9 @@ void refresh_status_icons() {
     }
     if (ui_bluestat) {
         lv_img_set_src(ui_bluestat, current_ble_icon());
+    }
+    if (ui_bluestat1) {
+        lv_img_set_src(ui_bluestat1, current_ble_icon());
     }
     if (ui_bluestat2) {
         lv_img_set_src(ui_bluestat2, current_ble_icon());
@@ -554,10 +561,13 @@ void add_config_to_response(JsonObject root) {
     radio["rx_tone_index"] = radio_config.rx_subaudio.index;
     radio["squelch"] = radio_config.squelch;
     radio["wide_band"] = radio_config.wide_band;
+    radio["power_high"] = radio_config.power_high;
+    radio["power_level"] = radio_config.power_high ? 3 : 1;
 
     JsonObject server = root["server"].to<JsonObject>();
     server["callsign"] = g_config.server.callsign;
     server["node_ssid"] = g_config.server.node_ssid;
+    server["dmr_id"] = g_config.server.dmr_id;
     server["udp_host"] = g_config.server.udp_host;
     server["udp_port"] = g_config.server.udp_port;
     server["http_api_base_url"] = g_config.server.http_api_base_url;
@@ -605,6 +615,12 @@ bool parse_radio_config(JsonObjectConst input, device_config::RadioConfig &confi
     config.rx_subaudio.index = input["rx_tone_index"] | 0;
     config.squelch = input["squelch"] | 4;
     config.wide_band = input["wide_band"] | false;
+    if (!input["power_high"].isNull()) {
+        config.power_high = input["power_high"] | false;
+    } else {
+        const uint8_t power_level = input["power_level"] | (config.power_high ? 3 : 1);
+        config.power_high = power_level >= 2;
+    }
 
     if (config.tx_frequency_x10000 < 4000000UL || config.tx_frequency_x10000 > 4700000UL ||
         config.rx_frequency_x10000 < 4000000UL || config.rx_frequency_x10000 > 4700000UL) {
@@ -622,6 +638,7 @@ bool parse_server_config(JsonObjectConst input, device_config::ServerConfig &con
     device_config::set_defaults(config);
     copy_cstr(config.callsign, input["callsign"] | "");
     config.node_ssid = input["node_ssid"] | 0;
+    config.dmr_id = input["dmr_id"] | 0;
     const char *udp_host = input["udp_host"] | "";
     if (udp_host[0] != '\0') {
         copy_cstr(config.udp_host, udp_host);
@@ -637,8 +654,12 @@ bool parse_server_config(JsonObjectConst input, device_config::ServerConfig &con
     copy_cstr(config.account, input["account"] | "");
     copy_cstr(config.device_auth_password, input["device_auth_password"] | "");
 
-    if (config.node_ssid > 15) {
-        error = "Node SSID must be 0-15";
+    if (config.node_ssid != 0 && !device_config::is_valid_device_node_ssid(config.node_ssid)) {
+        error = "Node SSID must be 1-99 or 106-235";
+        return false;
+    }
+    if (config.dmr_id > 0xFFFFFFUL) {
+        error = "DMR ID must be <= 16777215";
         return false;
     }
     return true;
@@ -849,6 +870,7 @@ void process_rpc_request(const String &json_text) {
         }
 
         g_config.radio = config;
+        net_audio_link_schedule_radio_config_sync();
         send_rpc_success(request_variant);
         return;
     }

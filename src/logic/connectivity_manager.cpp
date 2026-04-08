@@ -324,6 +324,7 @@ String subaudio_type_to_string(device_config::SubAudioType type) {
     switch (type) {
         case device_config::SubAudioType::CTCSS: return "CTCSS";
         case device_config::SubAudioType::CDCSS_N: return "CDCSS_N";
+        case device_config::SubAudioType::CDCSS_I: return "CDCSS_I";
         case device_config::SubAudioType::OFF:
         default: return "OFF";
     }
@@ -331,7 +332,10 @@ String subaudio_type_to_string(device_config::SubAudioType type) {
 
 device_config::SubAudioType subaudio_type_from_string(const String &value) {
     if (value.equalsIgnoreCase("CTCSS")) return device_config::SubAudioType::CTCSS;
-    if (value.equalsIgnoreCase("CDCSS_N") || value.equalsIgnoreCase("DCS")) return device_config::SubAudioType::CDCSS_N;
+    if (value.equalsIgnoreCase("CDCSS_I") || value.equalsIgnoreCase("DCS_I")) return device_config::SubAudioType::CDCSS_I;
+    if (value.equalsIgnoreCase("CDCSS_N") || value.equalsIgnoreCase("DCS") || value.equalsIgnoreCase("DCS_N")) {
+        return device_config::SubAudioType::CDCSS_N;
+    }
     return device_config::SubAudioType::OFF;
 }
 

@@ -86,7 +86,8 @@ constexpr uint16_t CDCSS_TONES[] = {
 
 constexpr size_t CTCSS_TONE_COUNT = sizeof(CTCSS_TONES) / sizeof(CTCSS_TONES[0]);
 constexpr size_t CDCSS_TONE_COUNT = sizeof(CDCSS_TONES) / sizeof(CDCSS_TONES[0]);
-constexpr size_t SUBAUDIO_OPTION_COUNT = 1 + CTCSS_TONE_COUNT + CDCSS_TONE_COUNT;
+constexpr size_t CDCSS_POLARITY_COUNT = 2;
+constexpr size_t SUBAUDIO_OPTION_COUNT = 1 + CTCSS_TONE_COUNT + (CDCSS_TONE_COUNT * CDCSS_POLARITY_COUNT);
 
 EditStage edit_stage = EditStage::NONE;
 EditMode edit_mode = EditMode::NONE;
@@ -213,9 +214,15 @@ SubAudioSetting sanitize_subaudio(SubAudioType type, uint8_t index) {
             return {SubAudioType::CTCSS, static_cast<uint8_t>(index % CTCSS_TONE_COUNT)};
         case SubAudioType::CDCSS_N:
             return {SubAudioType::CDCSS_N, static_cast<uint8_t>(index % CDCSS_TONE_COUNT)};
+        case SubAudioType::CDCSS_I:
+            return {SubAudioType::CDCSS_I, static_cast<uint8_t>(index % CDCSS_TONE_COUNT)};
         default:
             return {SubAudioType::OFF, 0};
     }
+}
+
+char cdcss_polarity_suffix(SubAudioType type) {
+    return (type == SubAudioType::CDCSS_I) ? 'I' : 'N';
 }
 
 void format_frequency(uint32_t value_x10000, char *buffer, size_t buffer_len) {
@@ -238,11 +245,21 @@ void format_subaudio_text_compact(const SubAudioSetting &setting, char *buffer, 
             snprintf(buffer, buffer_len, "OFF");
             break;
         case SubAudioType::CTCSS:
-            snprintf(buffer, buffer_len, "T%u", static_cast<unsigned int>(setting.index + 1));
+            snprintf(buffer,
+                     buffer_len,
+                     "T%u",
+                     static_cast<unsigned int>(((setting.index < CTCSS_TONE_COUNT) ? setting.index : 0) + 1));
             break;
         case SubAudioType::CDCSS_N:
-            snprintf(buffer, buffer_len, "D%03uN", static_cast<unsigned int>(CDCSS_TONES[setting.index]));
+        case SubAudioType::CDCSS_I: {
+            const size_t idx = (setting.index < CDCSS_TONE_COUNT) ? setting.index : 0;
+            snprintf(buffer,
+                     buffer_len,
+                     "D%03u%c",
+                     static_cast<unsigned int>(CDCSS_TONES[idx]),
+                     cdcss_polarity_suffix(setting.type));
             break;
+        }
         default:
             snprintf(buffer, buffer_len, "OFF");
             break;
@@ -345,7 +362,20 @@ void format_subaudio_text(const SubAudioSetting &setting, char *buffer, size_t b
         }
         case SubAudioType::CDCSS_N: {
             const size_t idx = (setting.index < CDCSS_TONE_COUNT) ? setting.index : 0;
-            snprintf(buffer, buffer_len, "D%03uN", static_cast<unsigned int>(CDCSS_TONES[idx]));
+            snprintf(buffer,
+                     buffer_len,
+                     "D%03u%c",
+                     static_cast<unsigned int>(CDCSS_TONES[idx]),
+                     cdcss_polarity_suffix(setting.type));
+            break;
+        }
+        case SubAudioType::CDCSS_I: {
+            const size_t idx = (setting.index < CDCSS_TONE_COUNT) ? setting.index : 0;
+            snprintf(buffer,
+                     buffer_len,
+                     "D%03u%c",
+                     static_cast<unsigned int>(CDCSS_TONES[idx]),
+                     cdcss_polarity_suffix(setting.type));
             break;
         }
         default:
@@ -366,6 +396,10 @@ size_t subaudio_to_option(const SubAudioSetting &setting) {
             const size_t idx = (setting.index < CDCSS_TONE_COUNT) ? setting.index : 0;
             return 1 + CTCSS_TONE_COUNT + idx;
         }
+        case SubAudioType::CDCSS_I: {
+            const size_t idx = (setting.index < CDCSS_TONE_COUNT) ? setting.index : 0;
+            return 1 + CTCSS_TONE_COUNT + CDCSS_TONE_COUNT + idx;
+        }
         default:
             return 0;
     }
@@ -384,6 +418,9 @@ SubAudioSetting option_to_subaudio(size_t option) {
     if (dcs_option < CDCSS_TONE_COUNT) {
         return {SubAudioType::CDCSS_N, static_cast<uint8_t>(dcs_option)};
     }
+    if (dcs_option < (CDCSS_TONE_COUNT * CDCSS_POLARITY_COUNT)) {
+        return {SubAudioType::CDCSS_I, static_cast<uint8_t>(dcs_option - CDCSS_TONE_COUNT)};
+    }
 
     return {SubAudioType::OFF, 0};
 }
@@ -399,11 +436,12 @@ bool apply_subaudio_to_sa818(bool is_tx, const SubAudioSetting &setting) {
             return is_tx ? sa818_set_ctcss_tx(static_cast<uint16_t>(setting.index + 1))
                          : sa818_set_ctcss_rx(static_cast<uint16_t>(setting.index + 1));
         case SubAudioType::CDCSS_N:
+        case SubAudioType::CDCSS_I:
             if (setting.index >= CDCSS_TONE_COUNT) {
                 return false;
             }
-            return is_tx ? sa818_set_cdcss_tx(CDCSS_TONES[setting.index])
-                         : sa818_set_cdcss_rx(CDCSS_TONES[setting.index]);
+            return is_tx ? sa818_set_cdcss_tx(CDCSS_TONES[setting.index], setting.type == SubAudioType::CDCSS_I)
+                         : sa818_set_cdcss_rx(CDCSS_TONES[setting.index], setting.type == SubAudioType::CDCSS_I);
         default:
             return false;
     }
@@ -422,8 +460,13 @@ void build_subaudio_string(const SubAudioSetting &setting, char *buffer, size_t 
             }
             break;
         case SubAudioType::CDCSS_N:
+        case SubAudioType::CDCSS_I:
             if (setting.index < CDCSS_TONE_COUNT) {
-                snprintf(buffer, buffer_len, "%03uN", static_cast<unsigned int>(CDCSS_TONES[setting.index]));
+                snprintf(buffer,
+                         buffer_len,
+                         "%03u%c",
+                         static_cast<unsigned int>(CDCSS_TONES[setting.index]),
+                         cdcss_polarity_suffix(setting.type));
             } else {
                 snprintf(buffer, buffer_len, "0000");
             }
@@ -496,12 +539,24 @@ bool save_radio_config_to_storage() {
     return device_config::save_radio(build_radio_config_snapshot());
 }
 
-void show_save_overlay() {
-    if (save_overlay || !lv_scr_act()) {
+void on_save_overlay_deleted(lv_event_t *event) {
+    if (lv_event_get_target(event) == save_overlay) {
+        save_overlay = nullptr;
+    }
+}
+
+void ensure_save_overlay() {
+    if (save_overlay && lv_obj_is_valid(save_overlay)) {
         return;
     }
 
-    save_overlay = lv_obj_create(lv_scr_act());
+    save_overlay = nullptr;
+    lv_obj_t *root = lv_layer_top();
+    if (!root) {
+        return;
+    }
+
+    save_overlay = lv_obj_create(root);
     lv_obj_remove_style_all(save_overlay);
     lv_obj_set_size(save_overlay, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_color(save_overlay, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -509,6 +564,8 @@ void show_save_overlay() {
     lv_obj_set_style_border_width(save_overlay, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(save_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(save_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(save_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(save_overlay, on_save_overlay_deleted, LV_EVENT_DELETE, nullptr);
 
     lv_obj_t *panel = lv_obj_create(save_overlay);
     lv_obj_set_size(panel, 180, 76);
@@ -525,19 +582,29 @@ void show_save_overlay() {
     lv_obj_set_style_text_color(label, lv_color_hex(0xDFF3FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_align(label, LV_ALIGN_CENTER);
+}
 
+void show_save_overlay() {
+    ensure_save_overlay();
+    if (!save_overlay || !lv_obj_is_valid(save_overlay)) {
+        save_overlay = nullptr;
+        return;
+    }
+
+    lv_obj_clear_flag(save_overlay, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(save_overlay);
     lv_obj_invalidate(save_overlay);
     lv_refr_now(lv_disp_get_default());
 }
 
 void hide_save_overlay() {
-    if (!save_overlay) {
+    if (!save_overlay || !lv_obj_is_valid(save_overlay)) {
+        save_overlay = nullptr;
         return;
     }
 
-    lv_obj_del(save_overlay);
-    save_overlay = nullptr;
+    lv_obj_add_flag(save_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_invalidate(save_overlay);
     lv_refr_now(lv_disp_get_default());
 }
 

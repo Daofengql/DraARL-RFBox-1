@@ -23,6 +23,7 @@ enum class SubAudioType : uint8_t {
     OFF = 0,
     CTCSS = 1,
     CDCSS_N = 2,
+    CDCSS_I = 3,
 };
 
 struct SubAudioSetting {

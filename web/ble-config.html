@@ -535,7 +535,7 @@
 
     function initSelects() {
       setMenuOptions("radioSql", Array.from({ length: 9 }, (_, index) => ({ label: String(index), value: String(index) })), "4");
-      const toneTypes = ["OFF", "CTCSS", "CDCSS_N"].map((value) => ({ label: value, value }));
+      const toneTypes = ["OFF", "CTCSS", "CDCSS_N", "CDCSS_I"].map((value) => ({ label: value, value }));
       setMenuOptions("txToneType", toneTypes, "OFF");
       setMenuOptions("rxToneType", toneTypes, "OFF");
       updateToneOptions("tx");
@@ -552,6 +552,8 @@
         ? CTCSS.map((label, index) => ({ label, value: String(index) }))
         : type === "CDCSS_N"
           ? DCS.map((value, index) => ({ label: `D${String(value).padStart(3, "0")}N`, value: String(index) }))
+          : type === "CDCSS_I"
+            ? DCS.map((value, index) => ({ label: `D${String(value).padStart(3, "0")}I`, value: String(index) }))
           : [{ label: "OFF", value: "0" }];
 
       setMenuOptions(`${prefix}ToneIndex`, items, current);

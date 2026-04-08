@@ -55,10 +55,10 @@ void sanitize_radio_config(RadioConfig &config) {
         config.rx_frequency_x10000 = 4385000UL;
     }
 
-    if (config.tx_subaudio.type > SubAudioType::CDCSS_N) {
+    if (config.tx_subaudio.type > SubAudioType::CDCSS_I) {
         config.tx_subaudio = {SubAudioType::OFF, 0};
     }
-    if (config.rx_subaudio.type > SubAudioType::CDCSS_N) {
+    if (config.rx_subaudio.type > SubAudioType::CDCSS_I) {
         config.rx_subaudio = {SubAudioType::OFF, 0};
     }
 

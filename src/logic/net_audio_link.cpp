@@ -77,6 +77,8 @@ constexpr uint8_t CONFIG_TLV_SQL_LEVEL = 0x05;
 constexpr uint8_t CONFIG_TLV_POWER_LEVEL = 0x06;
 constexpr uint8_t CONFIG_TLV_TX_BANDWIDTH = 0x07;
 constexpr uint8_t CONFIG_TLV_TIMESTAMP = 0x10;
+constexpr int64_t VALID_TIME_SYNC_MIN_MS = 946684800000LL;   // 2000-01-01T00:00:00Z
+constexpr int64_t VALID_TIME_SYNC_MAX_MS = 4102444800000LL;  // 2100-01-01T00:00:00Z
 
 constexpr float CTCSS_TONES[] = {
     67.0f,  71.9f,  74.4f,  77.0f,  79.7f,  82.5f,  85.4f,  88.5f,  91.5f,  94.8f,
@@ -247,6 +249,24 @@ uint32_t read_u32_be(const uint8_t *src) {
 
 int64_t read_i64_be(const uint8_t *src) {
     return static_cast<int64_t>(read_u64_be(src));
+}
+
+bool is_plausible_unix_time_ms(int64_t unix_ms) {
+    return unix_ms >= VALID_TIME_SYNC_MIN_MS && unix_ms <= VALID_TIME_SYNC_MAX_MS;
+}
+
+bool try_parse_time_sync_ms(const uint8_t *data, size_t data_len, int64_t &unix_ms) {
+    if (!data || data_len != 10 || data[0] != CONFIG_CMD_TIME) {
+        return false;
+    }
+
+    const int64_t parsed_value = read_i64_be(data + 2);
+    if (!is_plausible_unix_time_ms(parsed_value)) {
+        return false;
+    }
+
+    unix_ms = parsed_value;
+    return true;
 }
 
 void write_u64_be(uint8_t *dest, uint64_t value) {
@@ -1081,9 +1101,19 @@ void handle_config_packet(const uint8_t *data, size_t data_len) {
             }
             break;
         case CONFIG_CMD_TIME:
-            if (data_len >= 9) {
-                app_logic_set_time_from_server_ms(read_i64_be(data + 1));
-                Serial.println("[NET][CFG] time sync applied.");
+            if (data_len == 10) {
+                int64_t unix_ms = 0;
+                if (try_parse_time_sync_ms(data, data_len, unix_ms)) {
+                    app_logic_set_time_from_server_ms(unix_ms);
+                    Serial.printf("[NET][CFG] time sync applied. offset=2 ts=%lld\n",
+                                  static_cast<long long>(unix_ms));
+                } else {
+                    Serial.printf("[NET][CFG] time sync parse failed. len=%u\n",
+                                  static_cast<unsigned int>(data_len));
+                }
+            } else {
+                Serial.printf("[NET][CFG] time sync ignored. len=%u expected=10\n",
+                              static_cast<unsigned int>(data_len));
             }
             break;
         default:

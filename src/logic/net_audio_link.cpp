@@ -14,7 +14,9 @@
 #include <opus.h>
 
 #include <cmath>
+#include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 
@@ -37,7 +39,7 @@ constexpr uint8_t TYPE_CONFIG = 3;
 constexpr uint8_t TYPE_OPUS_16K = 5;
 constexpr uint8_t TYPE_SERVER_VOICE = 6;
 
-constexpr uint8_t DEV_MODEL_ESP32 = 107;
+constexpr uint8_t DEV_MODEL_ESP32 = 1;
 
 constexpr uint32_t OPUS_SAMPLE_RATE = 16000;
 constexpr uint8_t OPUS_CHANNELS = 1;
@@ -76,6 +78,10 @@ constexpr uint8_t CONFIG_TLV_TX_CTCSS = 0x04;
 constexpr uint8_t CONFIG_TLV_SQL_LEVEL = 0x05;
 constexpr uint8_t CONFIG_TLV_POWER_LEVEL = 0x06;
 constexpr uint8_t CONFIG_TLV_TX_BANDWIDTH = 0x07;
+constexpr uint8_t CONFIG_TLV_RX_TONE_MODE = 0x08;
+constexpr uint8_t CONFIG_TLV_RX_TONE_VALUE = 0x09;
+constexpr uint8_t CONFIG_TLV_TX_TONE_MODE = 0x0A;
+constexpr uint8_t CONFIG_TLV_TX_TONE_VALUE = 0x0B;
 constexpr uint8_t CONFIG_TLV_TIMESTAMP = 0x10;
 constexpr int64_t VALID_TIME_SYNC_MIN_MS = 946684800000LL;   // 2000-01-01T00:00:00Z
 constexpr int64_t VALID_TIME_SYNC_MAX_MS = 4102444800000LL;  // 2100-01-01T00:00:00Z
@@ -86,6 +92,17 @@ constexpr float CTCSS_TONES[] = {
     136.5f, 141.3f, 146.2f, 151.4f, 156.7f, 162.2f, 167.9f, 173.8f, 179.9f, 186.2f,
     192.8f, 203.5f, 210.7f, 218.1f, 225.7f, 233.6f, 241.8f, 250.3f
 };
+
+constexpr uint16_t CDCSS_CODES[] = {
+    23,  25,  26,  31,  32,  43,  47,  51,  54,  65,  71,  72,  73,  74,  114, 115, 116,
+    125, 131, 132, 134, 143, 152, 155, 156, 162, 165, 172, 174, 205, 223, 226, 243, 244, 245,
+    251, 261, 263, 265, 271, 306, 311, 315, 331, 343, 346, 351, 364, 365, 371, 411, 412, 413,
+    423, 431, 432, 445, 464, 465, 466, 503, 506, 516, 532, 546, 565, 606, 612, 624, 627, 631,
+    632, 654, 662, 664, 703, 712, 723, 731, 732, 734, 743, 754
+};
+
+constexpr size_t CTCSS_TONE_COUNT = sizeof(CTCSS_TONES) / sizeof(CTCSS_TONES[0]);
+constexpr size_t CDCSS_CODE_COUNT = sizeof(CDCSS_CODES) / sizeof(CDCSS_CODES[0]);
 
 enum class LinkState : uint8_t {
     IDLE = 0,
@@ -303,7 +320,7 @@ device_config::SubAudioSetting ctcss_setting_from_hz(float hz) {
 
     size_t best_index = 0;
     float best_diff = fabsf(CTCSS_TONES[0] - hz);
-    for (size_t i = 1; i < (sizeof(CTCSS_TONES) / sizeof(CTCSS_TONES[0])); ++i) {
+    for (size_t i = 1; i < CTCSS_TONE_COUNT; ++i) {
         const float diff = fabsf(CTCSS_TONES[i] - hz);
         if (diff < best_diff) {
             best_diff = diff;
@@ -319,9 +336,201 @@ float ctcss_hz_from_setting(const device_config::SubAudioSetting &setting) {
         return 0.0f;
     }
 
-    const size_t count = sizeof(CTCSS_TONES) / sizeof(CTCSS_TONES[0]);
-    const size_t index = (setting.index < count) ? setting.index : 0;
+    const size_t index = (setting.index < CTCSS_TONE_COUNT) ? setting.index : 0;
     return CTCSS_TONES[index];
+}
+
+struct ToneFieldParseState {
+    bool mode_present = false;
+    bool mode_valid = false;
+    uint8_t mode = 0;
+    bool value_present = false;
+    bool value_valid = false;
+    char value_text[9] = {0};
+};
+
+bool try_get_cdcss_index(uint16_t code, uint8_t &index) {
+    for (size_t i = 0; i < CDCSS_CODE_COUNT; ++i) {
+        if (CDCSS_CODES[i] == code) {
+            index = static_cast<uint8_t>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+uint8_t tone_mode_from_setting(const device_config::SubAudioSetting &setting) {
+    switch (setting.type) {
+        case device_config::SubAudioType::CTCSS: return 1U;
+        case device_config::SubAudioType::CDCSS_N: return 2U;
+        case device_config::SubAudioType::CDCSS_I: return 3U;
+        case device_config::SubAudioType::OFF:
+        default: return 0U;
+    }
+}
+
+void trim_ascii_inplace(char *text) {
+    if (!text) return;
+
+    char *start = text;
+    while (*start != '\0' && std::isspace(static_cast<unsigned char>(*start))) {
+        ++start;
+    }
+
+    if (start != text) {
+        memmove(text, start, strlen(start) + 1);
+    }
+
+    size_t len = strlen(text);
+    while (len > 0 && std::isspace(static_cast<unsigned char>(text[len - 1]))) {
+        text[--len] = '\0';
+    }
+}
+
+void parse_ascii_tlv_text(const uint8_t *src, size_t src_len, char *dest, size_t dest_len) {
+    if (!src || !dest || dest_len == 0) return;
+
+    size_t write_len = 0;
+    for (size_t i = 0; i < src_len && write_len < (dest_len - 1); ++i) {
+        const char ch = static_cast<char>(src[i]);
+        if (ch == '\0') {
+            break;
+        }
+        dest[write_len++] = ch;
+    }
+    dest[write_len] = '\0';
+    trim_ascii_inplace(dest);
+}
+
+void format_tone_value_from_setting(const device_config::SubAudioSetting &setting, char *buffer, size_t buffer_len) {
+    if (!buffer || buffer_len == 0) return;
+
+    switch (setting.type) {
+        case device_config::SubAudioType::CTCSS: {
+            const float hz = ctcss_hz_from_setting(setting);
+            if (hz <= 0.0f) {
+                snprintf(buffer, buffer_len, "0");
+            } else {
+                snprintf(buffer, buffer_len, "%.1f", hz);
+            }
+            break;
+        }
+        case device_config::SubAudioType::CDCSS_N:
+        case device_config::SubAudioType::CDCSS_I: {
+            const size_t index = (setting.index < CDCSS_CODE_COUNT) ? setting.index : 0;
+            snprintf(buffer, buffer_len, "%03u", static_cast<unsigned int>(CDCSS_CODES[index]));
+            break;
+        }
+        case device_config::SubAudioType::OFF:
+        default:
+            snprintf(buffer, buffer_len, "0");
+            break;
+    }
+}
+
+void fill_tone_value_tlv(const device_config::SubAudioSetting &setting, uint8_t (&out)[8]) {
+    memset(out, 0, sizeof(out));
+    char text[12] = {0};
+    format_tone_value_from_setting(setting, text, sizeof(text));
+    const size_t text_len = strnlen(text, sizeof(text));
+    const size_t copy_len = (text_len < sizeof(out)) ? text_len : sizeof(out);
+    memcpy(out, text, copy_len);
+}
+
+device_config::SubAudioSetting parse_tone_setting(uint8_t mode, const char *value_text) {
+    char text[16] = {0};
+    if (value_text && value_text[0] != '\0') {
+        strncpy(text, value_text, sizeof(text) - 1);
+        text[sizeof(text) - 1] = '\0';
+    }
+    trim_ascii_inplace(text);
+
+    if (mode == 0) {
+        return {device_config::SubAudioType::OFF, 0};
+    }
+
+    if (mode == 1) {
+        char *end_ptr = nullptr;
+        const float hz = strtof(text, &end_ptr);
+        while (end_ptr && *end_ptr != '\0' && std::isspace(static_cast<unsigned char>(*end_ptr))) {
+            ++end_ptr;
+        }
+        if (hz <= 0.0f || (end_ptr && *end_ptr != '\0')) {
+            return {device_config::SubAudioType::OFF, 0};
+        }
+        return ctcss_setting_from_hz(hz);
+    }
+
+    if (mode == 2 || mode == 3) {
+        const size_t text_len = strnlen(text, sizeof(text));
+        uint8_t mode_from_suffix = 0;
+        if (text_len > 1) {
+            const char tail = static_cast<char>(std::toupper(static_cast<unsigned char>(text[text_len - 1])));
+            if (tail == 'N' || tail == 'I') {
+                mode_from_suffix = (tail == 'I') ? 3U : 2U;
+                text[text_len - 1] = '\0';
+            }
+        }
+
+        char digits[4] = {0};
+        size_t digits_len = 0;
+        for (size_t i = 0; text[i] != '\0' && digits_len < 3; ++i) {
+            if (std::isdigit(static_cast<unsigned char>(text[i]))) {
+                digits[digits_len++] = text[i];
+            }
+        }
+        if (digits_len == 0) {
+            return {device_config::SubAudioType::OFF, 0};
+        }
+
+        const uint16_t code = static_cast<uint16_t>(atoi(digits));
+        uint8_t index = 0;
+        if (!try_get_cdcss_index(code, index)) {
+            return {device_config::SubAudioType::OFF, 0};
+        }
+
+        const uint8_t resolved_mode = (mode_from_suffix != 0) ? mode_from_suffix : mode;
+        const device_config::SubAudioType type = (resolved_mode == 3U)
+                                                     ? device_config::SubAudioType::CDCSS_I
+                                                     : device_config::SubAudioType::CDCSS_N;
+        return {type, index};
+    }
+
+    return {device_config::SubAudioType::OFF, 0};
+}
+
+bool apply_tone_field_update(const ToneFieldParseState &state,
+                             const device_config::SubAudioSetting &base,
+                             device_config::SubAudioSetting &out) {
+    if (!state.mode_present && !state.value_present) {
+        return false;
+    }
+
+    uint8_t mode = tone_mode_from_setting(base);
+    char value_text[16] = {0};
+    format_tone_value_from_setting(base, value_text, sizeof(value_text));
+
+    if (state.mode_present) {
+        if (!state.mode_valid) {
+            mode = 0;
+            snprintf(value_text, sizeof(value_text), "0");
+        } else {
+            mode = state.mode;
+        }
+    }
+
+    if (state.value_present) {
+        if (!state.value_valid) {
+            mode = 0;
+            snprintf(value_text, sizeof(value_text), "0");
+        } else {
+            strncpy(value_text, state.value_text, sizeof(value_text) - 1);
+            value_text[sizeof(value_text) - 1] = '\0';
+        }
+    }
+
+    out = parse_tone_setting(mode, value_text);
+    return true;
 }
 
 uint8_t power_level_from_radio_config(const device_config::RadioConfig &config) {
@@ -918,39 +1127,62 @@ bool build_radio_config_payload(uint8_t *payload, size_t payload_cap, size_t &pa
 
     size_t offset = 0;
     payload[offset++] = CONFIG_CMD_APPLY;
-    payload[offset++] = 7;
+    const size_t item_count_index = offset++;
+    uint8_t item_count = 0;
 
     uint8_t buffer8[8] = {0};
     uint8_t buffer4[4] = {0};
     uint8_t buffer1[1] = {0};
+    uint8_t tone_value_buffer[8] = {0};
+
+    auto append_tlv_with_count = [&](uint8_t type, const uint8_t *value, size_t value_len) -> bool {
+        if (!append_config_tlv(payload, payload_cap, offset, type, value, value_len)) {
+            return false;
+        }
+        ++item_count;
+        return true;
+    };
 
     write_u64_be(buffer8, static_cast<uint64_t>(config.rx_frequency_x10000) * 100ULL);
-    if (!append_config_tlv(payload, payload_cap, offset, CONFIG_TLV_RX_FREQ, buffer8, sizeof(buffer8))) return false;
+    if (!append_tlv_with_count(CONFIG_TLV_RX_FREQ, buffer8, sizeof(buffer8))) return false;
 
     write_u64_be(buffer8, static_cast<uint64_t>(config.tx_frequency_x10000) * 100ULL);
-    if (!append_config_tlv(payload, payload_cap, offset, CONFIG_TLV_TX_FREQ, buffer8, sizeof(buffer8))) return false;
+    if (!append_tlv_with_count(CONFIG_TLV_TX_FREQ, buffer8, sizeof(buffer8))) return false;
 
     write_float_be(buffer4, ctcss_hz_from_setting(config.rx_subaudio));
-    if (!append_config_tlv(payload, payload_cap, offset, CONFIG_TLV_RX_CTCSS, buffer4, sizeof(buffer4))) return false;
+    if (!append_tlv_with_count(CONFIG_TLV_RX_CTCSS, buffer4, sizeof(buffer4))) return false;
 
     write_float_be(buffer4, ctcss_hz_from_setting(config.tx_subaudio));
-    if (!append_config_tlv(payload, payload_cap, offset, CONFIG_TLV_TX_CTCSS, buffer4, sizeof(buffer4))) return false;
+    if (!append_tlv_with_count(CONFIG_TLV_TX_CTCSS, buffer4, sizeof(buffer4))) return false;
 
     buffer1[0] = config.squelch;
-    if (!append_config_tlv(payload, payload_cap, offset, CONFIG_TLV_SQL_LEVEL, buffer1, sizeof(buffer1))) return false;
+    if (!append_tlv_with_count(CONFIG_TLV_SQL_LEVEL, buffer1, sizeof(buffer1))) return false;
 
     buffer1[0] = power_level_from_radio_config(config);
-    if (!append_config_tlv(payload, payload_cap, offset, CONFIG_TLV_POWER_LEVEL, buffer1, sizeof(buffer1))) return false;
+    if (!append_tlv_with_count(CONFIG_TLV_POWER_LEVEL, buffer1, sizeof(buffer1))) return false;
 
     buffer1[0] = config.wide_band ? 2U : 1U;
-    if (!append_config_tlv(payload, payload_cap, offset, CONFIG_TLV_TX_BANDWIDTH, buffer1, sizeof(buffer1))) return false;
+    if (!append_tlv_with_count(CONFIG_TLV_TX_BANDWIDTH, buffer1, sizeof(buffer1))) return false;
 
+    buffer1[0] = tone_mode_from_setting(config.rx_subaudio);
+    if (!append_tlv_with_count(CONFIG_TLV_RX_TONE_MODE, buffer1, sizeof(buffer1))) return false;
+
+    fill_tone_value_tlv(config.rx_subaudio, tone_value_buffer);
+    if (!append_tlv_with_count(CONFIG_TLV_RX_TONE_VALUE, tone_value_buffer, sizeof(tone_value_buffer))) return false;
+
+    buffer1[0] = tone_mode_from_setting(config.tx_subaudio);
+    if (!append_tlv_with_count(CONFIG_TLV_TX_TONE_MODE, buffer1, sizeof(buffer1))) return false;
+
+    fill_tone_value_tlv(config.tx_subaudio, tone_value_buffer);
+    if (!append_tlv_with_count(CONFIG_TLV_TX_TONE_VALUE, tone_value_buffer, sizeof(tone_value_buffer))) return false;
+
+    payload[item_count_index] = item_count;
     payload_len = offset;
     return true;
 }
 
 bool send_radio_config_packet() {
-    uint8_t payload[64] = {0};
+    uint8_t payload[96] = {0};
     size_t payload_len = 0;
     if (!build_radio_config_payload(payload, sizeof(payload), payload_len)) {
         return false;
@@ -994,6 +1226,12 @@ bool handle_config_apply_payload(const uint8_t *data, size_t data_len) {
     const uint8_t item_count = data[1];
     size_t offset = 2;
     bool saw_radio_field = false;
+    bool rx_ctcss_present = false;
+    bool tx_ctcss_present = false;
+    float rx_ctcss_hz = 0.0f;
+    float tx_ctcss_hz = 0.0f;
+    ToneFieldParseState rx_tone_state = {};
+    ToneFieldParseState tx_tone_state = {};
 
     for (uint8_t i = 0; i < item_count; ++i) {
         if ((offset + 2) > data_len) {
@@ -1022,13 +1260,15 @@ bool handle_config_apply_payload(const uint8_t *data, size_t data_len) {
                 break;
             case CONFIG_TLV_RX_CTCSS:
                 if (value_len == 4) {
-                    updated.rx_subaudio = ctcss_setting_from_hz(read_float_be(value));
+                    rx_ctcss_hz = read_float_be(value);
+                    rx_ctcss_present = true;
                     saw_radio_field = true;
                 }
                 break;
             case CONFIG_TLV_TX_CTCSS:
                 if (value_len == 4) {
-                    updated.tx_subaudio = ctcss_setting_from_hz(read_float_be(value));
+                    tx_ctcss_hz = read_float_be(value);
+                    tx_ctcss_present = true;
                     saw_radio_field = true;
                 }
                 break;
@@ -1050,6 +1290,46 @@ bool handle_config_apply_payload(const uint8_t *data, size_t data_len) {
                     saw_radio_field = true;
                 }
                 break;
+            case CONFIG_TLV_RX_TONE_MODE:
+                rx_tone_state.mode_present = true;
+                saw_radio_field = true;
+                if (value_len == 1 && value[0] <= 3U) {
+                    rx_tone_state.mode_valid = true;
+                    rx_tone_state.mode = value[0];
+                } else {
+                    rx_tone_state.mode_valid = false;
+                }
+                break;
+            case CONFIG_TLV_RX_TONE_VALUE:
+                rx_tone_state.value_present = true;
+                saw_radio_field = true;
+                if (value_len == 8) {
+                    parse_ascii_tlv_text(value, value_len, rx_tone_state.value_text, sizeof(rx_tone_state.value_text));
+                    rx_tone_state.value_valid = true;
+                } else {
+                    rx_tone_state.value_valid = false;
+                }
+                break;
+            case CONFIG_TLV_TX_TONE_MODE:
+                tx_tone_state.mode_present = true;
+                saw_radio_field = true;
+                if (value_len == 1 && value[0] <= 3U) {
+                    tx_tone_state.mode_valid = true;
+                    tx_tone_state.mode = value[0];
+                } else {
+                    tx_tone_state.mode_valid = false;
+                }
+                break;
+            case CONFIG_TLV_TX_TONE_VALUE:
+                tx_tone_state.value_present = true;
+                saw_radio_field = true;
+                if (value_len == 8) {
+                    parse_ascii_tlv_text(value, value_len, tx_tone_state.value_text, sizeof(tx_tone_state.value_text));
+                    tx_tone_state.value_valid = true;
+                } else {
+                    tx_tone_state.value_valid = false;
+                }
+                break;
             case CONFIG_TLV_TIMESTAMP:
                 if (value_len == 8) {
                     app_logic_set_time_from_server_ms(read_i64_be(value));
@@ -1060,6 +1340,21 @@ bool handle_config_apply_payload(const uint8_t *data, size_t data_len) {
         }
 
         offset += value_len;
+    }
+
+    if (rx_ctcss_present) {
+        updated.rx_subaudio = ctcss_setting_from_hz(rx_ctcss_hz);
+    }
+    if (tx_ctcss_present) {
+        updated.tx_subaudio = ctcss_setting_from_hz(tx_ctcss_hz);
+    }
+
+    device_config::SubAudioSetting parsed_tone = {};
+    if (apply_tone_field_update(rx_tone_state, updated.rx_subaudio, parsed_tone)) {
+        updated.rx_subaudio = parsed_tone;
+    }
+    if (apply_tone_field_update(tx_tone_state, updated.tx_subaudio, parsed_tone)) {
+        updated.tx_subaudio = parsed_tone;
     }
 
     if (!saw_radio_field || radio_config_equals(current, updated)) {

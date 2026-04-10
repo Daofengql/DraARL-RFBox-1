@@ -18,6 +18,15 @@ constexpr size_t PASSWORD_MAX_LEN = 63;
 constexpr size_t CALLSIGN_MAX_LEN = 15;
 constexpr uint8_t BACKLIGHT_PWM_MIN = 20;
 constexpr uint8_t BACKLIGHT_PWM_MAX = 255;
+constexpr uint16_t RF_GUARD_SINGLE_TX_LIMIT_MIN_S = 1;
+constexpr uint16_t RF_GUARD_SINGLE_TX_LIMIT_MAX_S = 1800;
+constexpr uint16_t RF_GUARD_WINDOW_MIN_S = 5;
+constexpr uint16_t RF_GUARD_WINDOW_MAX_S = 3600;
+constexpr uint16_t RF_GUARD_MAX_TX_IN_WINDOW_MIN_S = 1;
+constexpr bool RF_GUARD_ENABLED_DEFAULT = true;
+constexpr uint16_t RF_GUARD_SINGLE_TX_LIMIT_DEFAULT_S = 30;
+constexpr uint16_t RF_GUARD_WINDOW_DEFAULT_S = 300;
+constexpr uint16_t RF_GUARD_MAX_TX_IN_WINDOW_DEFAULT_S = 60;
 
 enum class SubAudioType : uint8_t {
     OFF = 0,
@@ -50,6 +59,10 @@ struct RadioConfig {
     uint8_t squelch;
     bool wide_band;
     bool power_high;
+    bool rf_guard_enabled;
+    uint16_t rf_guard_single_tx_limit_s;
+    uint16_t rf_guard_window_s;
+    uint16_t rf_guard_max_tx_in_window_s;
 };
 
 struct ServerConfig {

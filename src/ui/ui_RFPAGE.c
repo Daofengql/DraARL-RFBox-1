@@ -6,10 +6,16 @@
 #include "ui.h"
 
 lv_obj_t * ui_RFPAGE = NULL;
-lv_obj_t * ui_BLEP1 = NULL;
-lv_obj_t * ui_Label10 = NULL;
-lv_obj_t * ui_BLES1 = NULL;
-lv_obj_t * ui_BLEN1 = NULL;
+lv_obj_t * ui_PWP = NULL;
+lv_obj_t * ui_PWL = NULL;
+lv_obj_t * ui_PWS = NULL;
+lv_obj_t * ui_PWN = NULL;
+lv_obj_t * ui_LimitP = NULL;
+lv_obj_t * ui_PWL1 = NULL;
+lv_obj_t * ui_rfguard = NULL;
+lv_obj_t * ui_rfguardsingle = NULL;
+lv_obj_t * ui_rfguardwindow = NULL;
+lv_obj_t * ui_rfguardmaxtxinwindow = NULL;
 lv_obj_t * ui_header2 = NULL;
 lv_obj_t * ui_logo2 = NULL;
 lv_obj_t * ui_title1 = NULL;
@@ -25,38 +31,86 @@ void ui_RFPAGE_screen_init(void)
     ui_RFPAGE = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_RFPAGE, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
-    ui_BLEP1 = lv_obj_create(ui_RFPAGE);
-    lv_obj_set_width(ui_BLEP1, 310);
-    lv_obj_set_height(ui_BLEP1, 40);
-    lv_obj_set_x(ui_BLEP1, 0);
-    lv_obj_set_y(ui_BLEP1, -63);
-    lv_obj_set_align(ui_BLEP1, LV_ALIGN_CENTER);
-    lv_obj_clear_flag(ui_BLEP1, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    ui_PWP = lv_obj_create(ui_RFPAGE);
+    lv_obj_set_width(ui_PWP, 310);
+    lv_obj_set_height(ui_PWP, 40);
+    lv_obj_set_x(ui_PWP, 0);
+    lv_obj_set_y(ui_PWP, -63);
+    lv_obj_set_align(ui_PWP, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_PWP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
-    ui_Label10 = lv_label_create(ui_BLEP1);
-    lv_obj_set_width(ui_Label10, LV_SIZE_CONTENT);   /// 1
-    lv_obj_set_height(ui_Label10, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_Label10, -125);
-    lv_obj_set_y(ui_Label10, 0);
-    lv_obj_set_align(ui_Label10, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_Label10, "功率:");
-    lv_obj_set_style_text_font(ui_Label10, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+    ui_PWL = lv_label_create(ui_PWP);
+    lv_obj_set_width(ui_PWL, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_PWL, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_PWL, -125);
+    lv_obj_set_y(ui_PWL, 0);
+    lv_obj_set_align(ui_PWL, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_PWL, "功率:");
+    lv_obj_set_style_text_font(ui_PWL, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_BLES1 = lv_switch_create(ui_BLEP1);
-    lv_obj_set_width(ui_BLES1, 50);
-    lv_obj_set_height(ui_BLES1, 25);
-    lv_obj_set_x(ui_BLES1, 115);
-    lv_obj_set_y(ui_BLES1, 0);
-    lv_obj_set_align(ui_BLES1, LV_ALIGN_CENTER);
+    ui_PWS = lv_switch_create(ui_PWP);
+    lv_obj_set_width(ui_PWS, 50);
+    lv_obj_set_height(ui_PWS, 25);
+    lv_obj_set_x(ui_PWS, 115);
+    lv_obj_set_y(ui_PWS, 0);
+    lv_obj_set_align(ui_PWS, LV_ALIGN_CENTER);
 
-    ui_BLEN1 = lv_label_create(ui_BLEP1);
-    lv_obj_set_width(ui_BLEN1, LV_SIZE_CONTENT);   /// 1
-    lv_obj_set_height(ui_BLEN1, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_BLEN1, 73);
-    lv_obj_set_y(ui_BLEN1, 0);
-    lv_obj_set_align(ui_BLEN1, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_BLEN1, "低");
-    lv_obj_set_style_text_font(ui_BLEN1, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+    ui_PWN = lv_label_create(ui_PWP);
+    lv_obj_set_width(ui_PWN, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_PWN, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_PWN, 73);
+    lv_obj_set_y(ui_PWN, 0);
+    lv_obj_set_align(ui_PWN, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_PWN, "低");
+    lv_obj_set_style_text_font(ui_PWN, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_LimitP = lv_obj_create(ui_RFPAGE);
+    lv_obj_set_width(ui_LimitP, 310);
+    lv_obj_set_height(ui_LimitP, 150);
+    lv_obj_set_x(ui_LimitP, 0);
+    lv_obj_set_y(ui_LimitP, 40);
+    lv_obj_set_align(ui_LimitP, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_LimitP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_PWL1 = lv_label_create(ui_LimitP);
+    lv_obj_set_width(ui_PWL1, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_PWL1, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_PWL1, -92);
+    lv_obj_set_y(ui_PWL1, 2);
+    lv_obj_set_align(ui_PWL1, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_PWL1, "长发保护:\n\n单次发射上限:\n\n窗口大小:\n\n窗口发射上限:");
+    lv_obj_set_style_text_font(ui_PWL1, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_rfguard = lv_switch_create(ui_LimitP);
+    lv_obj_set_width(ui_rfguard, 50);
+    lv_obj_set_height(ui_rfguard, 25);
+    lv_obj_set_x(ui_rfguard, 115);
+    lv_obj_set_y(ui_rfguard, -53);
+    lv_obj_set_align(ui_rfguard, LV_ALIGN_CENTER);
+
+    ui_rfguardsingle = lv_label_create(ui_LimitP);
+    lv_obj_set_width(ui_rfguardsingle, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_rfguardsingle, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_rfguardsingle, 110);
+    lv_obj_set_y(ui_rfguardsingle, -15);
+    lv_obj_set_align(ui_rfguardsingle, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_rfguardsingle, "30s");
+
+    ui_rfguardwindow = lv_label_create(ui_LimitP);
+    lv_obj_set_width(ui_rfguardwindow, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_rfguardwindow, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_rfguardwindow, 110);
+    lv_obj_set_y(ui_rfguardwindow, 20);
+    lv_obj_set_align(ui_rfguardwindow, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_rfguardwindow, "60s");
+
+    ui_rfguardmaxtxinwindow = lv_label_create(ui_LimitP);
+    lv_obj_set_width(ui_rfguardmaxtxinwindow, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_rfguardmaxtxinwindow, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_rfguardmaxtxinwindow, 110);
+    lv_obj_set_y(ui_rfguardmaxtxinwindow, 55);
+    lv_obj_set_align(ui_rfguardmaxtxinwindow, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_rfguardmaxtxinwindow, "40s");
 
     ui_header2 = lv_obj_create(ui_RFPAGE);
     lv_obj_remove_style_all(ui_header2);
@@ -125,10 +179,16 @@ void ui_RFPAGE_screen_destroy(void)
 
     // NULL screen variables
     ui_RFPAGE = NULL;
-    ui_BLEP1 = NULL;
-    ui_Label10 = NULL;
-    ui_BLES1 = NULL;
-    ui_BLEN1 = NULL;
+    ui_PWP = NULL;
+    ui_PWL = NULL;
+    ui_PWS = NULL;
+    ui_PWN = NULL;
+    ui_LimitP = NULL;
+    ui_PWL1 = NULL;
+    ui_rfguard = NULL;
+    ui_rfguardsingle = NULL;
+    ui_rfguardwindow = NULL;
+    ui_rfguardmaxtxinwindow = NULL;
     ui_header2 = NULL;
     ui_logo2 = NULL;
     ui_title1 = NULL;

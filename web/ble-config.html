@@ -374,6 +374,16 @@
           <mdui-select id="rxToneType" label="RX 亚音类型"></mdui-select>
           <mdui-select id="rxToneIndex" label="RX 亚音"></mdui-select>
         </div>
+
+        <div class="field-grid">
+          <mdui-select id="rfGuardEnabled" label="RF 功放保护">
+            <mdui-menu-item value="true">启用</mdui-menu-item>
+            <mdui-menu-item value="false">关闭</mdui-menu-item>
+          </mdui-select>
+          <mdui-text-field id="rfGuardSingleTxLimit" type="number" min="1" max="1800" label="单次发射上限 (s)" placeholder="30"></mdui-text-field>
+          <mdui-text-field id="rfGuardWindow" type="number" min="5" max="3600" label="窗口大小 (s)" placeholder="300"></mdui-text-field>
+          <mdui-text-field id="rfGuardMaxTxInWindow" type="number" min="1" max="3600" label="窗口发射上限 (s)" placeholder="60"></mdui-text-field>
+        </div>
       </mdui-card>
 
       <mdui-card class="panel-card" id="serverCard" variant="outlined">
@@ -541,6 +551,10 @@
       updateToneOptions("tx");
       updateToneOptions("rx");
       setFieldValue("wifiDhcp", "true");
+      setFieldValue("rfGuardEnabled", "true");
+      setFieldValue("rfGuardSingleTxLimit", "30");
+      setFieldValue("rfGuardWindow", "300");
+      setFieldValue("rfGuardMaxTxInWindow", "60");
       updateWifiModeFields();
       syncWifiSsid("");
     }
@@ -816,6 +830,10 @@
       updateToneOptions("rx");
       setFieldValue("txToneIndex", String(data.tx_tone_index ?? 0));
       setFieldValue("rxToneIndex", String(data.rx_tone_index ?? 0));
+      setFieldValue("rfGuardEnabled", String(data.rf_guard_enabled !== false));
+      setFieldValue("rfGuardSingleTxLimit", String(data.rf_guard_single_tx_limit_s ?? 30));
+      setFieldValue("rfGuardWindow", String(data.rf_guard_window_s ?? 300));
+      setFieldValue("rfGuardMaxTxInWindow", String(data.rf_guard_max_tx_in_window_s ?? 60));
     }
 
     function fillServer(data) {
@@ -897,7 +915,11 @@
         rx_tone_type: getFieldValue("rxToneType"),
         rx_tone_index: Number(getFieldValue("rxToneIndex")),
         squelch: Number(getFieldValue("radioSql")),
-        wide_band: getFieldValue("radioBw") === "true"
+        wide_band: getFieldValue("radioBw") === "true",
+        rf_guard_enabled: getFieldValue("rfGuardEnabled") === "true",
+        rf_guard_single_tx_limit_s: Number(getFieldValue("rfGuardSingleTxLimit") || 30),
+        rf_guard_window_s: Number(getFieldValue("rfGuardWindow") || 300),
+        rf_guard_max_tx_in_window_s: Number(getFieldValue("rfGuardMaxTxInWindow") || 60)
       };
     }
 
@@ -911,6 +933,22 @@
         account: getFieldValue("serverAccount").trim(),
         device_auth_password: getFieldValue("serverDevicePassword")
       };
+    }
+
+    function validateRfGuardPayload(payload) {
+      const single = Number(payload.rf_guard_single_tx_limit_s);
+      const windowSec = Number(payload.rf_guard_window_s);
+      const maxInWindow = Number(payload.rf_guard_max_tx_in_window_s);
+
+      if (!Number.isInteger(single) || single < 1 || single > 1800) {
+        throw new Error("单次发射上限范围应为 1-1800 秒");
+      }
+      if (!Number.isInteger(windowSec) || windowSec < 5 || windowSec > 3600) {
+        throw new Error("窗口大小范围应为 5-3600 秒");
+      }
+      if (!Number.isInteger(maxInWindow) || maxInWindow < 1 || maxInWindow > windowSec) {
+        throw new Error("窗口发射上限应为 1-窗口大小");
+      }
     }
 
     async function safeRun(label, fn) {
@@ -950,7 +988,9 @@
       log("WiFi 配置已发送");
     })));
     $("saveRadioBtn").addEventListener("click", () => safeRun("保存 SA818", () => withBusy("saveRadioBtn", async () => {
-      await sendRpc("set_radio", currentRadioPayload());
+      const payload = currentRadioPayload();
+      validateRfGuardPayload(payload);
+      await sendRpc("set_radio", payload);
       log("SA818 配置已发送");
     })));
     $("saveServerBtn").addEventListener("click", () => safeRun("保存 DraARL", () => withBusy("saveServerBtn", async () => {

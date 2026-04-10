@@ -19,6 +19,62 @@ bool acceleration_enabled = false;
 uint32_t last_rotate_time = 0;
 int rotate_speed = 1;
 
+constexpr uint8_t EVENT_QUEUE_CAPACITY = 32;
+struct QueuedEvent {
+    EC11Event event = EC11Event::NONE;
+    int32_t value = 0;
+};
+
+QueuedEvent event_queue[EVENT_QUEUE_CAPACITY];
+uint8_t event_queue_head = 0;
+uint8_t event_queue_tail = 0;
+uint8_t event_queue_size = 0;
+portMUX_TYPE event_queue_lock = portMUX_INITIALIZER_UNLOCKED;
+
+void reset_event_queue() {
+    portENTER_CRITICAL(&event_queue_lock);
+    event_queue_head = 0;
+    event_queue_tail = 0;
+    event_queue_size = 0;
+    portEXIT_CRITICAL(&event_queue_lock);
+}
+
+void queue_event(EC11Event event, int32_t value) {
+    if (event == EC11Event::NONE) {
+        return;
+    }
+
+    portENTER_CRITICAL(&event_queue_lock);
+
+    // Keep newest events when queue is full to avoid UI lock-up on fast rotation.
+    if (event_queue_size >= EVENT_QUEUE_CAPACITY) {
+        event_queue_tail = static_cast<uint8_t>((event_queue_tail + 1U) % EVENT_QUEUE_CAPACITY);
+        --event_queue_size;
+    }
+
+    event_queue[event_queue_head].event = event;
+    event_queue[event_queue_head].value = value;
+    event_queue_head = static_cast<uint8_t>((event_queue_head + 1U) % EVENT_QUEUE_CAPACITY);
+    ++event_queue_size;
+
+    portEXIT_CRITICAL(&event_queue_lock);
+}
+
+bool pop_event(QueuedEvent &out) {
+    bool has_event = false;
+
+    portENTER_CRITICAL(&event_queue_lock);
+    if (event_queue_size > 0) {
+        out = event_queue[event_queue_tail];
+        event_queue_tail = static_cast<uint8_t>((event_queue_tail + 1U) % EVENT_QUEUE_CAPACITY);
+        --event_queue_size;
+        has_event = true;
+    }
+    portEXIT_CRITICAL(&event_queue_lock);
+
+    return has_event;
+}
+
 void emit_event(EC11Event event, int32_t value) {
     if (event_callback) {
         event_callback(event, value);
@@ -59,11 +115,11 @@ void on_knob_turned(long value) {
     if (diff > 0) {
         last_direction = EC11Direction::COUNTER_CLOCKWISE;
         counter += delta;
-        emit_event(EC11Event::ROTATE_CCW, delta);
+        queue_event(EC11Event::ROTATE_CCW, delta);
     } else {
         last_direction = EC11Direction::CLOCKWISE;
         counter -= delta;
-        emit_event(EC11Event::ROTATE_CW, delta);
+        queue_event(EC11Event::ROTATE_CW, delta);
     }
 
     last_encoder_value = static_cast<int32_t>(value);
@@ -98,6 +154,7 @@ bool ec11_init(void) {
     button_pressed_at_ms = 0;
     rotate_speed = 1;
     last_rotate_time = 0;
+    reset_event_queue();
 
     return true;
 }
@@ -109,6 +166,7 @@ void ec11_deinit(void) {
     }
 
     event_callback = nullptr;
+    reset_event_queue();
 }
 
 void ec11_set_callback(EC11Callback callback) {
@@ -149,20 +207,25 @@ void ec11_update(void) {
     if (current_button_state && !last_button_state) {
         button_pressed = true;
         button_pressed_at_ms = millis();
-        emit_event(EC11Event::BUTTON_PRESS, 0);
+        queue_event(EC11Event::BUTTON_PRESS, 0);
     }
 
     if (!current_button_state && last_button_state) {
         button_pressed = false;
         const uint32_t duration = millis() - button_pressed_at_ms;
 
-        emit_event(EC11Event::BUTTON_RELEASE, static_cast<int32_t>(duration));
+        queue_event(EC11Event::BUTTON_RELEASE, static_cast<int32_t>(duration));
         if (duration >= long_press_threshold_ms) {
-            emit_event(EC11Event::BUTTON_LONG_PRESS, static_cast<int32_t>(duration));
+            queue_event(EC11Event::BUTTON_LONG_PRESS, static_cast<int32_t>(duration));
         } else {
-            emit_event(EC11Event::BUTTON_CLICK, static_cast<int32_t>(duration));
+            queue_event(EC11Event::BUTTON_CLICK, static_cast<int32_t>(duration));
         }
     }
 
     last_button_state = current_button_state;
+
+    QueuedEvent event = {};
+    while (pop_event(event)) {
+        emit_event(event.event, event.value);
+    }
 }

@@ -567,6 +567,10 @@ void add_config_to_response(JsonObject root) {
     radio["wide_band"] = radio_config.wide_band;
     radio["power_high"] = radio_config.power_high;
     radio["power_level"] = radio_config.power_high ? 3 : 1;
+    radio["rf_guard_enabled"] = radio_config.rf_guard_enabled;
+    radio["rf_guard_single_tx_limit_s"] = radio_config.rf_guard_single_tx_limit_s;
+    radio["rf_guard_window_s"] = radio_config.rf_guard_window_s;
+    radio["rf_guard_max_tx_in_window_s"] = radio_config.rf_guard_max_tx_in_window_s;
 
     JsonObject server = root["server"].to<JsonObject>();
     server["callsign"] = g_config.server.callsign;
@@ -625,6 +629,12 @@ bool parse_radio_config(JsonObjectConst input, device_config::RadioConfig &confi
         const uint8_t power_level = input["power_level"] | (config.power_high ? 3 : 1);
         config.power_high = power_level >= 2;
     }
+    config.rf_guard_enabled = input["rf_guard_enabled"] | config.rf_guard_enabled;
+    config.rf_guard_single_tx_limit_s =
+        input["rf_guard_single_tx_limit_s"] | config.rf_guard_single_tx_limit_s;
+    config.rf_guard_window_s = input["rf_guard_window_s"] | config.rf_guard_window_s;
+    config.rf_guard_max_tx_in_window_s =
+        input["rf_guard_max_tx_in_window_s"] | config.rf_guard_max_tx_in_window_s;
 
     if (config.tx_frequency_x10000 < 4000000UL || config.tx_frequency_x10000 > 4700000UL ||
         config.rx_frequency_x10000 < 4000000UL || config.rx_frequency_x10000 > 4700000UL) {
@@ -633,6 +643,21 @@ bool parse_radio_config(JsonObjectConst input, device_config::RadioConfig &confi
     }
     if (config.squelch > 8) {
         error = "Squelch must be 0-8";
+        return false;
+    }
+    if (config.rf_guard_single_tx_limit_s < device_config::RF_GUARD_SINGLE_TX_LIMIT_MIN_S ||
+        config.rf_guard_single_tx_limit_s > device_config::RF_GUARD_SINGLE_TX_LIMIT_MAX_S) {
+        error = "RF guard single_tx_limit_s invalid";
+        return false;
+    }
+    if (config.rf_guard_window_s < device_config::RF_GUARD_WINDOW_MIN_S ||
+        config.rf_guard_window_s > device_config::RF_GUARD_WINDOW_MAX_S) {
+        error = "RF guard window_s invalid";
+        return false;
+    }
+    if (config.rf_guard_max_tx_in_window_s < device_config::RF_GUARD_MAX_TX_IN_WINDOW_MIN_S ||
+        config.rf_guard_max_tx_in_window_s > config.rf_guard_window_s) {
+        error = "RF guard max_tx_in_window_s must be <= window_s";
         return false;
     }
     return true;

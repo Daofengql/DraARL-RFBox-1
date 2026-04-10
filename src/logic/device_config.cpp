@@ -65,6 +65,24 @@ void sanitize_radio_config(RadioConfig &config) {
     if (config.squelch > 8) {
         config.squelch = 4;
     }
+
+    if (config.rf_guard_single_tx_limit_s < RF_GUARD_SINGLE_TX_LIMIT_MIN_S ||
+        config.rf_guard_single_tx_limit_s > RF_GUARD_SINGLE_TX_LIMIT_MAX_S) {
+        config.rf_guard_single_tx_limit_s = RF_GUARD_SINGLE_TX_LIMIT_DEFAULT_S;
+    }
+
+    if (config.rf_guard_window_s < RF_GUARD_WINDOW_MIN_S ||
+        config.rf_guard_window_s > RF_GUARD_WINDOW_MAX_S) {
+        config.rf_guard_window_s = RF_GUARD_WINDOW_DEFAULT_S;
+    }
+
+    if (config.rf_guard_max_tx_in_window_s < RF_GUARD_MAX_TX_IN_WINDOW_MIN_S ||
+        config.rf_guard_max_tx_in_window_s > config.rf_guard_window_s) {
+        config.rf_guard_max_tx_in_window_s = RF_GUARD_MAX_TX_IN_WINDOW_DEFAULT_S;
+    }
+    if (config.rf_guard_max_tx_in_window_s > config.rf_guard_window_s) {
+        config.rf_guard_max_tx_in_window_s = config.rf_guard_window_s;
+    }
 }
 
 void sanitize_server_config(ServerConfig &config) {
@@ -116,6 +134,10 @@ void load_radio_config(Preferences &prefs, RadioConfig &config) {
     config.squelch = prefs.getUChar("radio_sql", config.squelch);
     config.wide_band = prefs.getBool("radio_bw", config.wide_band);
     config.power_high = prefs.getBool("radio_pwr", config.power_high);
+    config.rf_guard_enabled = prefs.getBool("radio_rfg_en", config.rf_guard_enabled);
+    config.rf_guard_single_tx_limit_s = prefs.getUShort("radio_rfg_stx", config.rf_guard_single_tx_limit_s);
+    config.rf_guard_window_s = prefs.getUShort("radio_rfg_win", config.rf_guard_window_s);
+    config.rf_guard_max_tx_in_window_s = prefs.getUShort("radio_rfg_max", config.rf_guard_max_tx_in_window_s);
     sanitize_radio_config(config);
 }
 
@@ -153,6 +175,10 @@ void set_defaults(RadioConfig &config) {
     config.squelch = 4;
     config.wide_band = false;
     config.power_high = true;
+    config.rf_guard_enabled = RF_GUARD_ENABLED_DEFAULT;
+    config.rf_guard_single_tx_limit_s = RF_GUARD_SINGLE_TX_LIMIT_DEFAULT_S;
+    config.rf_guard_window_s = RF_GUARD_WINDOW_DEFAULT_S;
+    config.rf_guard_max_tx_in_window_s = RF_GUARD_MAX_TX_IN_WINDOW_DEFAULT_S;
 }
 
 void set_defaults(ServerConfig &config) {
@@ -206,6 +232,10 @@ bool save(const DeviceConfig &config) {
     prefs.putUChar("radio_sql", config.radio.squelch);
     prefs.putBool("radio_bw", config.radio.wide_band);
     prefs.putBool("radio_pwr", config.radio.power_high);
+    prefs.putBool("radio_rfg_en", config.radio.rf_guard_enabled);
+    prefs.putUShort("radio_rfg_stx", config.radio.rf_guard_single_tx_limit_s);
+    prefs.putUShort("radio_rfg_win", config.radio.rf_guard_window_s);
+    prefs.putUShort("radio_rfg_max", config.radio.rf_guard_max_tx_in_window_s);
 
     prefs.putString("svr_call", config.server.callsign);
     prefs.putUChar("svr_ssid", config.server.node_ssid);

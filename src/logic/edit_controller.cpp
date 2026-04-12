@@ -32,6 +32,7 @@ constexpr uint32_t INFO_PANEL_COLOR_TX = 0xB71C1C;
 constexpr uint32_t INFO_PANEL_COLOR_RX = 0x2E7D32;
 constexpr uint32_t HIGHLIGHT_COLOR_SELECT = 0xFF6A00;
 constexpr uint32_t HIGHLIGHT_COLOR_EDIT = 0xFF6A00;
+constexpr size_t NETWORK_BRIDGE_SOURCE_TEXT_MAX = 48;
 
 constexpr char DEFAULT_INFO_TEXT[] = "BH5UVN";
 
@@ -128,6 +129,7 @@ int8_t editing_digit_index = -1;
 
 bool sql_rx_active = false;
 bool net_bridge_active = false;
+char net_bridge_source_text[NETWORK_BRIDGE_SOURCE_TEXT_MAX] = {0};
 bool rf_overload_active = false;
 bool radio_cfg_dirty = false;
 lv_obj_t *save_overlay = nullptr;
@@ -251,6 +253,24 @@ uint16_t clamp_u16_range(uint16_t value, uint16_t min_value, uint16_t max_value)
         return max_value;
     }
     return value;
+}
+
+void format_network_bridge_source_text(const char *call_sign, uint8_t ssid, char *out, size_t out_len) {
+    if (!out || out_len == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+    if (!call_sign || call_sign[0] == '\0') {
+        return;
+    }
+
+    const unsigned int ssid_value = static_cast<unsigned int>(ssid);
+    if (ssid_value > 0U) {
+        snprintf(out, out_len, "%s-%u  SPK", call_sign, ssid_value);
+    } else {
+        snprintf(out, out_len, "%s  SPK", call_sign);
+    }
 }
 
 SubAudioSetting sanitize_subaudio(SubAudioType type, uint8_t index) {
@@ -956,7 +976,7 @@ void update_info_panel_state() {
             if (net_bridge_active) {
                 lv_obj_set_style_bg_color(ui_infoPanel, lv_color_hex(INFO_PANEL_COLOR_TX), LV_PART_MAIN | LV_STATE_DEFAULT);
                 lv_obj_set_style_bg_opa(ui_infoPanel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_label_set_text(ui_Info, "NET->RF");
+                lv_label_set_text(ui_Info, (net_bridge_source_text[0] != '\0') ? net_bridge_source_text : "NET->RF");
                 break;
             }
             lv_obj_set_style_bg_color(
@@ -1940,6 +1960,7 @@ void edit_controller_on_enter_main_screen() {
     rf_edit_mode = false;
     rf_cursor = RfCursor::POWER;
     net_bridge_active = false;
+    net_bridge_source_text[0] = '\0';
     rf_overload_active = false;
     exit_edit_session();
 }
@@ -2263,6 +2284,21 @@ void edit_controller_set_network_bridge_active(bool active) {
 
     net_bridge_active = active;
     refresh_edit_widgets();
+}
+
+void edit_controller_set_network_bridge_source(const char *call_sign, uint8_t ssid) {
+    char rendered[NETWORK_BRIDGE_SOURCE_TEXT_MAX] = {0};
+    format_network_bridge_source_text(call_sign, ssid, rendered, sizeof(rendered));
+
+    if (strncmp(net_bridge_source_text, rendered, sizeof(net_bridge_source_text)) == 0) {
+        return;
+    }
+
+    strncpy(net_bridge_source_text, rendered, sizeof(net_bridge_source_text) - 1);
+    net_bridge_source_text[sizeof(net_bridge_source_text) - 1] = '\0';
+    if (net_bridge_active) {
+        refresh_edit_widgets();
+    }
 }
 
 void edit_controller_set_rf_overload_active(bool active) {

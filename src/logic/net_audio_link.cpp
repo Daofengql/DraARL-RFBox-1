@@ -1134,6 +1134,7 @@ void stop_voice_bridge() {
         sa818_stop_tx();
         edit_controller_set_network_bridge_active(false);
     }
+    edit_controller_set_network_bridge_source(nullptr, 0);
     g_voice_state = VoiceBridgeState::IDLE;
     g_last_voice_packet_at_ms = 0;
 }
@@ -2109,12 +2110,14 @@ void process_udp_packet(const uint8_t *packet, size_t packet_len) {
     if (header.type == TYPE_OPUS_16K) {
         ++g_audio_rx_stats.packets_type5;
         g_audio_rx_stats.audio_payload_bytes += static_cast<uint32_t>(data_len);
+        edit_controller_set_network_bridge_source(header.call_sign, header.ssid);
         decode_and_play_payload(data, data_len);
         return;
     }
 
     if (header.type == TYPE_SERVER_VOICE) {
         ++g_audio_rx_stats.packets_type6;
+        edit_controller_set_network_bridge_source(header.call_sign, header.ssid);
         if (data_len > 68) {
             g_audio_rx_stats.audio_payload_bytes += static_cast<uint32_t>(data_len - 68);
             decode_and_play_payload(data + 68, data_len - 68);

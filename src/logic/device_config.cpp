@@ -11,6 +11,7 @@ constexpr char DEFAULT_SERVER_UDP_HOST[] = "ptt.4l2.cn";
 constexpr uint16_t DEFAULT_SERVER_UDP_PORT = 60050;
 constexpr char DEFAULT_SERVER_HTTP_API_BASE_URL[] = "https://ptt.4l2.cn";
 constexpr char BACKLIGHT_KEY[] = "ui_bl";
+constexpr char AUTO_START_KEY[] = "ui_ast";
 
 template <size_t N>
 void copy_cstr(char (&dest)[N], const char *src) {
@@ -310,6 +311,28 @@ bool save_backlight_pwm(uint8_t pwm) {
     }
 
     const bool ok = prefs.putUChar(BACKLIGHT_KEY, sanitize_backlight_pwm(pwm)) > 0;
+    prefs.end();
+    return ok;
+}
+
+bool load_auto_start_enabled() {
+    Preferences prefs;
+    if (!prefs.begin(CONFIG_NS, true)) {
+        return false;
+    }
+
+    const bool enabled = prefs.getBool(AUTO_START_KEY, false);
+    prefs.end();
+    return enabled;
+}
+
+bool save_auto_start_enabled(bool enabled) {
+    Preferences prefs;
+    if (!prefs.begin(CONFIG_NS, false)) {
+        return false;
+    }
+
+    const bool ok = prefs.putBool(AUTO_START_KEY, enabled) > 0;
     prefs.end();
     return ok;
 }

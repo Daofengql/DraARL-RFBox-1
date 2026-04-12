@@ -39,6 +39,7 @@ AppState app_state = AppState::POWER_WAIT;
 bool key_last_pressed = false;
 bool key_long_triggered = false;
 uint32_t key_pressed_at_ms = 0;
+bool auto_start_enabled = false;
 
 size_t startup_step_index = 0;
 uint32_t startup_next_step_at_ms = 0;
@@ -46,7 +47,6 @@ uint32_t last_clock_refresh_at_ms = 0;
 time_t last_displayed_epoch = static_cast<time_t>(-1);
 bool time_synced = false;
 bool time_placeholder_rendered = false;
-lv_obj_t *settings_time_value_label = nullptr;
 bool timezone_initialized = false;
 
 bool init_spiffs_storage() {
@@ -110,49 +110,6 @@ void ensure_local_timezone() {
     timezone_initialized = true;
 }
 
-void ensure_settings_time_labels() {
-    if (!ui_Label6 || !ui_TimeP) {
-        return;
-    }
-
-    lv_coord_t left_x = 8;
-    if (ui_Label1) {
-        left_x = lv_obj_get_x(ui_Label1);
-    }
-
-    set_time_label_if_present(ui_Label6, "时间:");
-    lv_obj_set_width(ui_Label6, LV_SIZE_CONTENT);
-    lv_label_set_long_mode(ui_Label6, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_align(ui_Label6, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_align(ui_Label6, LV_ALIGN_LEFT_MID);
-    lv_obj_set_pos(ui_Label6, left_x, 0);
-
-    if (!settings_time_value_label) {
-        settings_time_value_label = lv_label_create(ui_TimeP);
-        lv_obj_clear_flag(settings_time_value_label, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_text_font(settings_time_value_label, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
-    }
-
-    lv_obj_update_layout(ui_TimeP);
-    const lv_coord_t panel_width = lv_obj_get_width(ui_TimeP);
-    const lv_coord_t value_left = left_x + lv_obj_get_width(ui_Label6) + 12;
-    lv_coord_t value_width = panel_width - value_left - 12;
-    if (value_width < 60) {
-        value_width = 60;
-    }
-
-    lv_obj_set_width(settings_time_value_label, value_width);
-    lv_label_set_long_mode(settings_time_value_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_align(settings_time_value_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_align(settings_time_value_label, LV_ALIGN_RIGHT_MID);
-    lv_obj_set_pos(settings_time_value_label, -12, 0);
-}
-
-void set_settings_time_value(const char *text) {
-    ensure_settings_time_labels();
-    set_time_label_if_present(settings_time_value_label, text ? text : "");
-}
-
 void refresh_time_widgets(bool force) {
     const uint32_t now_ms = millis();
     if (!force && last_clock_refresh_at_ms != 0 &&
@@ -168,7 +125,6 @@ void refresh_time_widgets(bool force) {
 
         set_time_label_if_present(ui_time, "--:--");
         set_time_label_if_present(ui_time1, "--:--");
-        set_settings_time_value("--:--:--");
         time_placeholder_rendered = true;
         last_displayed_epoch = static_cast<time_t>(-1);
         return;
@@ -187,13 +143,10 @@ void refresh_time_widgets(bool force) {
     }
 
     char header_text[6] = {0};
-    char detail_text[20] = {0};
     strftime(header_text, sizeof(header_text), "%H:%M", &local_tm);
-    strftime(detail_text, sizeof(detail_text), "%H:%M:%S", &local_tm);
 
     set_time_label_if_present(ui_time, header_text);
     set_time_label_if_present(ui_time1, header_text);
-    set_settings_time_value(detail_text);
 
     time_placeholder_rendered = false;
     last_displayed_epoch = now;
@@ -340,6 +293,13 @@ void update_power_key(uint32_t now_ms) {
         }
     }
 
+    if (app_state == AppState::MAIN_READY && pressed && !key_long_triggered) {
+        if ((now_ms - key_pressed_at_ms) >= KEY_LONG_PRESS_MS) {
+            key_long_triggered = true;
+            edit_controller_on_key0_long_press();
+        }
+    }
+
     key_last_pressed = pressed;
 }
 } // namespace
@@ -364,7 +324,14 @@ void app_logic_init() {
     }
 
     app_state = AppState::POWER_WAIT;
+    auto_start_enabled = device_config::load_auto_start_enabled();
     refresh_time_widgets(true);
+    if (auto_start_enabled) {
+        Serial.println("Auto-start is enabled. Starting boot sequence.");
+        start_boot_sequence(millis());
+        return;
+    }
+
     Serial.println("Waiting for KEY long press to boot.");
 }
 

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_sleep.h>
 #include <lvgl.h>
 
 #include <cctype>
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "../config.h"
 #include "../drivers/sa818_driver.h"
 #include "../ui/ui.h"
 #include "connectivity_manager.h"
@@ -53,6 +55,7 @@ enum class EditMode {
 enum class SettingsCursor : uint8_t {
     BRIGHTNESS = 0,
     BLE,
+    AUTOSTART,
     RF,
     ABOUT,
 };
@@ -69,6 +72,12 @@ enum class RfCursor : uint8_t {
     SINGLE_LIMIT,
     WINDOW_SIZE,
     WINDOW_MAX_TX,
+};
+
+enum class PowerMenuOption : uint8_t {
+    CANCEL = 0,
+    LOCK_SCREEN,
+    POWER_OFF,
 };
 
 using SubAudioType = device_config::SubAudioType;
@@ -123,6 +132,7 @@ bool rf_overload_active = false;
 bool radio_cfg_dirty = false;
 lv_obj_t *save_overlay = nullptr;
 uint8_t backlight_pwm = device_config::BACKLIGHT_PWM_MAX;
+bool auto_start_enabled = false;
 SettingsCursor settings_cursor = SettingsCursor::BRIGHTNESS;
 SettingsMode settings_mode = SettingsMode::NONE;
 bool info_preselect_active = false;
@@ -130,11 +140,21 @@ bool rf_select_active = false;
 bool rf_edit_mode = false;
 bool rf_page_dirty = false;
 RfCursor rf_cursor = RfCursor::POWER;
+bool screen_locked = false;
+lv_obj_t *power_popup = nullptr;
+lv_obj_t *power_popup_option_labels[3] = {nullptr, nullptr, nullptr};
+PowerMenuOption power_popup_option = PowerMenuOption::CANCEL;
 uint32_t last_settings_ble_refresh_ms = 0;
 uint32_t last_info_refresh_ms = 0;
 
 void apply_main_screen_overrides();
 void hide_header_update_indicators();
+void ensure_power_popup();
+void show_power_popup();
+void hide_power_popup_internal();
+bool is_power_popup_visible_internal();
+void refresh_power_popup_options();
+void apply_screen_lock(bool locked);
 
 bool is_editing_session_active() {
     return edit_stage != EditStage::NONE;
@@ -659,6 +679,207 @@ void hide_save_overlay() {
     lv_refr_now(lv_disp_get_default());
 }
 
+const char *power_menu_option_text(PowerMenuOption option) {
+    switch (option) {
+        case PowerMenuOption::CANCEL:
+            return "Cancel";
+        case PowerMenuOption::LOCK_SCREEN:
+            return "Lock Screen";
+        case PowerMenuOption::POWER_OFF:
+            return "Power Off";
+        default:
+            return "Cancel";
+    }
+}
+
+void refresh_power_popup_options() {
+    constexpr uint32_t SELECTED_COLOR = HIGHLIGHT_COLOR_SELECT;
+    for (size_t i = 0; i < 3; ++i) {
+        lv_obj_t *label = power_popup_option_labels[i];
+        if (!label) {
+            continue;
+        }
+
+        const PowerMenuOption option = static_cast<PowerMenuOption>(i);
+        const char *text = power_menu_option_text(option);
+        if (option == power_popup_option) {
+            char highlighted[48] = {0};
+            lv_label_set_recolor(label, true);
+            snprintf(highlighted,
+                     sizeof(highlighted),
+                     "#%06lX %s#",
+                     static_cast<unsigned long>(SELECTED_COLOR),
+                     text);
+            lv_label_set_text(label, highlighted);
+        } else {
+            lv_label_set_recolor(label, false);
+            lv_label_set_text(label, text);
+        }
+    }
+}
+
+void ensure_power_popup() {
+    if (power_popup && lv_obj_is_valid(power_popup)) {
+        return;
+    }
+
+    power_popup = nullptr;
+    lv_obj_t *root = lv_layer_top();
+    if (!root) {
+        return;
+    }
+
+    power_popup = lv_obj_create(root);
+    lv_obj_remove_style_all(power_popup);
+    lv_obj_set_size(power_popup, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(power_popup, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(power_popup, LV_OPA_60, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_clear_flag(power_popup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(power_popup, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *panel = lv_obj_create(power_popup);
+    lv_obj_set_size(panel, 220, 170);
+    lv_obj_set_align(panel, LV_ALIGN_CENTER);
+    lv_obj_set_style_radius(panel, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x1A2330), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x4A657F), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(panel, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(panel);
+    lv_label_set_text(title, "Power Menu");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 12);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xE4F0FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    for (size_t i = 0; i < 3; ++i) {
+        power_popup_option_labels[i] = lv_label_create(panel);
+        lv_obj_set_align(power_popup_option_labels[i], LV_ALIGN_TOP_LEFT);
+        lv_obj_set_pos(power_popup_option_labels[i], 22, 46 + static_cast<lv_coord_t>(i * 32));
+        lv_obj_set_style_text_font(power_popup_option_labels[i], &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(power_popup_option_labels[i], lv_color_hex(0xDFF3FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+
+    power_popup_option = PowerMenuOption::CANCEL;
+    refresh_power_popup_options();
+}
+
+bool is_power_popup_visible_internal() {
+    return power_popup && lv_obj_is_valid(power_popup) && !lv_obj_has_flag(power_popup, LV_OBJ_FLAG_HIDDEN);
+}
+
+void hide_power_popup_internal() {
+    if (!power_popup || !lv_obj_is_valid(power_popup)) {
+        power_popup = nullptr;
+        return;
+    }
+
+    lv_obj_add_flag(power_popup, LV_OBJ_FLAG_HIDDEN);
+}
+
+void apply_screen_lock(bool locked) {
+    if (screen_locked == locked) {
+        return;
+    }
+
+    screen_locked = locked;
+    if (screen_locked) {
+        updateBacklight(0.0f);
+        Serial.println("[UI] Screen locked (backlight=0).");
+        return;
+    }
+
+    updateBacklight(static_cast<float>(backlight_pwm) / 255.0f);
+    Serial.println("[UI] Screen unlocked.");
+}
+
+void execute_power_popup_action() {
+    switch (power_popup_option) {
+        case PowerMenuOption::CANCEL:
+            hide_power_popup_internal();
+            break;
+        case PowerMenuOption::LOCK_SCREEN:
+            hide_power_popup_internal();
+            apply_screen_lock(true);
+            break;
+        case PowerMenuOption::POWER_OFF:
+            hide_power_popup_internal();
+            // Ensure backlight is fully off before entering deep sleep.
+            updateBacklight(0.0f);
+            pinMode(BACKLIGHT_PIN, OUTPUT);
+            digitalWrite(BACKLIGHT_PIN, LOW);
+            // Put SA818 control lines into a defined power-down state.
+            pinMode(SA818_EN, OUTPUT);
+            digitalWrite(SA818_EN, LOW);
+            pinMode(SA818_PTT, OUTPUT);
+            digitalWrite(SA818_PTT, HIGH);
+            pinMode(SA818_SQL, OUTPUT);
+            digitalWrite(SA818_SQL, HIGH);
+            Serial.println("[PWR] Entering deep sleep (power off).");
+            delay(30);
+            esp_deep_sleep_start();
+            break;
+        default:
+            hide_power_popup_internal();
+            break;
+    }
+}
+
+void move_power_popup_cursor(int32_t delta) {
+    if (!is_power_popup_visible_internal() || delta == 0) {
+        return;
+    }
+
+    int32_t next = static_cast<int32_t>(power_popup_option) + delta;
+    constexpr int32_t OPTION_COUNT = 3;
+    next %= OPTION_COUNT;
+    if (next < 0) {
+        next += OPTION_COUNT;
+    }
+
+    power_popup_option = static_cast<PowerMenuOption>(next);
+    refresh_power_popup_options();
+}
+
+void show_power_popup() {
+    ensure_power_popup();
+    if (!power_popup || !lv_obj_is_valid(power_popup)) {
+        power_popup = nullptr;
+        return;
+    }
+
+    apply_screen_lock(false);
+    connectivity_manager_hide_ble_popup();
+    net_audio_link_hide_bind_popup();
+
+    power_popup_option = PowerMenuOption::CANCEL;
+    refresh_power_popup_options();
+    lv_obj_clear_flag(power_popup, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(power_popup);
+}
+
+void refresh_settings_autostart_widget() {
+    if (!ui_StartS) {
+        return;
+    }
+
+    if (auto_start_enabled) {
+        lv_obj_add_state(ui_StartS, LV_STATE_CHECKED);
+    } else {
+        lv_obj_clear_state(ui_StartS, LV_STATE_CHECKED);
+    }
+}
+
+void toggle_autostart_from_settings() {
+    auto_start_enabled = !auto_start_enabled;
+    if (!device_config::save_auto_start_enabled(auto_start_enabled)) {
+        Serial.println("Auto-start save failed.");
+        auto_start_enabled = device_config::load_auto_start_enabled();
+    }
+    refresh_settings_autostart_widget();
+}
+
 void save_and_apply_radio_config() {
     if (!radio_cfg_dirty) {
         return;
@@ -1000,7 +1221,11 @@ void refresh_info_panel_preselect_state() {
 
 void apply_backlight_pwm(uint8_t pwm, bool persist) {
     backlight_pwm = device_config::sanitize_backlight_pwm(pwm);
-    updateBacklight(static_cast<float>(backlight_pwm) / 255.0f);
+    if (screen_locked) {
+        updateBacklight(0.0f);
+    } else {
+        updateBacklight(static_cast<float>(backlight_pwm) / 255.0f);
+    }
 
     if (ui_LightS) {
         lv_slider_set_range(ui_LightS, device_config::BACKLIGHT_PWM_MIN, device_config::BACKLIGHT_PWM_MAX);
@@ -1127,6 +1352,7 @@ void refresh_settings_ble_widgets() {
 void refresh_settings_selection_state() {
     clear_selection_border(ui_lightP);
     clear_selection_border(ui_BLEP);
+    clear_selection_border(ui_autostart);
     clear_selection_border(ui_RFP);
     clear_selection_border(ui_InfoP);
 
@@ -1141,6 +1367,9 @@ void refresh_settings_selection_state() {
             break;
         case SettingsCursor::BLE:
             target = ui_BLEP;
+            break;
+        case SettingsCursor::AUTOSTART:
+            target = ui_autostart;
             break;
         case SettingsCursor::RF:
             target = ui_RFP;
@@ -1170,6 +1399,7 @@ void refresh_settings_page_widgets() {
         }
     }
     refresh_settings_ble_widgets();
+    refresh_settings_autostart_widget();
     refresh_settings_selection_state();
 }
 
@@ -1316,7 +1546,7 @@ void move_settings_cursor(int32_t delta) {
     }
 
     int32_t cursor = static_cast<int32_t>(settings_cursor) + delta;
-    constexpr int32_t SETTINGS_ITEM_COUNT = 4;
+    constexpr int32_t SETTINGS_ITEM_COUNT = 5;
     cursor %= SETTINGS_ITEM_COUNT;
     if (cursor < 0) {
         cursor += SETTINGS_ITEM_COUNT;
@@ -1472,6 +1702,9 @@ void on_settings_button_click() {
                     break;
                 case SettingsCursor::BLE:
                     toggle_ble_from_settings();
+                    break;
+                case SettingsCursor::AUTOSTART:
+                    toggle_autostart_from_settings();
                     break;
                 case SettingsCursor::RF:
                     settings_mode = SettingsMode::NONE;
@@ -1689,6 +1922,8 @@ void hide_header_update_indicators() {
 void edit_controller_init() {
     load_radio_config_from_storage();
     backlight_pwm = device_config::load_backlight_pwm();
+    auto_start_enabled = device_config::load_auto_start_enabled();
+    screen_locked = false;
     radio_cfg_dirty = false;
     log_radio_config("LOADED");
     set_edit_stage(EditStage::NONE);
@@ -1778,6 +2013,34 @@ void edit_controller_update() {
 }
 
 void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
+    if (screen_locked) {
+        if (event == EC11Event::BUTTON_CLICK) {
+            apply_screen_lock(false);
+        }
+        return;
+    }
+
+    if (is_power_popup_visible_internal()) {
+        switch (event) {
+            case EC11Event::ROTATE_CW:
+                move_power_popup_cursor((value == 0) ? 1 : value);
+                break;
+            case EC11Event::ROTATE_CCW:
+                move_power_popup_cursor(-((value == 0) ? 1 : value));
+                break;
+            case EC11Event::BUTTON_CLICK:
+                execute_power_popup_action();
+                break;
+            default:
+                break;
+        }
+        return;
+    }
+
+    if (connectivity_manager_is_ble_popup_visible() || net_audio_link_is_bind_popup_visible()) {
+        return;
+    }
+
     const ActiveScreen screen = get_active_screen();
 
     if (screen == ActiveScreen::SETTINGS) {
@@ -1898,6 +2161,20 @@ void edit_controller_on_encoder_event(EC11Event event, int32_t value) {
 }
 
 void edit_controller_on_key0_short_press() {
+    if (screen_locked) {
+        apply_screen_lock(false);
+        return;
+    }
+
+    if (is_power_popup_visible_internal()) {
+        hide_power_popup_internal();
+        return;
+    }
+
+    if (connectivity_manager_is_ble_popup_visible() || net_audio_link_is_bind_popup_visible()) {
+        return;
+    }
+
     const ActiveScreen screen = get_active_screen();
 
     if (screen == ActiveScreen::SETTINGS) {
@@ -1922,6 +2199,28 @@ void edit_controller_on_key0_short_press() {
     if (is_editing_session_active()) {
         advance_to_next_stage();
     }
+}
+
+void edit_controller_on_key0_long_press() {
+    if (screen_locked) {
+        apply_screen_lock(false);
+        return;
+    }
+
+    if (is_power_popup_visible_internal()) {
+        return;
+    }
+
+    const ActiveScreen screen = get_active_screen();
+    if (screen != ActiveScreen::MAIN) {
+        return;
+    }
+
+    if (is_editing_session_active()) {
+        return;
+    }
+
+    show_power_popup();
 }
 
 void edit_controller_get_radio_config(device_config::RadioConfig &config) {
@@ -1973,4 +2272,12 @@ void edit_controller_set_rf_overload_active(bool active) {
 
     rf_overload_active = active;
     refresh_edit_widgets();
+}
+
+void edit_controller_hide_power_popup() {
+    hide_power_popup_internal();
+}
+
+bool edit_controller_is_power_popup_visible() {
+    return is_power_popup_visible_internal();
 }

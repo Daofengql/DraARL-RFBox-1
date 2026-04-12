@@ -13,5 +13,7 @@ bool connectivity_manager_set_ble_enabled(bool enable, bool show_popup);
 bool connectivity_manager_is_ble_enabled();
 const char *connectivity_manager_get_ble_auth_code();
 const char *connectivity_manager_get_ble_device_name();
+void connectivity_manager_hide_ble_popup();
+bool connectivity_manager_is_ble_popup_visible();
 
 #endif // CONNECTIVITY_MANAGER_H

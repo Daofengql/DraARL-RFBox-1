@@ -98,6 +98,8 @@ bool is_valid_device_node_ssid(uint8_t ssid);
 uint8_t sanitize_backlight_pwm(uint8_t pwm);
 uint8_t load_backlight_pwm();
 bool save_backlight_pwm(uint8_t pwm);
+bool load_auto_start_enabled();
+bool save_auto_start_enabled(bool enabled);
 
 } // namespace device_config
 

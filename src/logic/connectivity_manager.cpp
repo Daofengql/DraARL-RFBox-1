@@ -254,6 +254,9 @@ void show_ble_popup(const char *reason) {
     ensure_popup();
     if (!g_ble_popup) return;
 
+    net_audio_link_hide_bind_popup();
+    edit_controller_hide_power_popup();
+
     lv_label_set_text(g_ble_popup_code_label, g_ble_auth_code);
     lv_obj_clear_flag(g_ble_popup, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(g_ble_popup);
@@ -1232,10 +1235,9 @@ bool connectivity_manager_handle_encoder_event(EC11Event event, int32_t value) {
 
     if (event == EC11Event::BUTTON_CLICK) {
         hide_ble_popup();
-        return true;
     }
 
-    return false;
+    return true;
 }
 
 bool connectivity_manager_set_ble_enabled(bool enable, bool show_popup) {
@@ -1281,4 +1283,12 @@ const char *connectivity_manager_get_ble_device_name() {
         build_ble_device_name();
     }
     return g_ble_device_name;
+}
+
+void connectivity_manager_hide_ble_popup() {
+    hide_ble_popup();
+}
+
+bool connectivity_manager_is_ble_popup_visible() {
+    return g_ble_popup_visible;
 }

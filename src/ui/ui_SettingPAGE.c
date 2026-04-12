@@ -13,8 +13,9 @@ lv_obj_t * ui_BLEP = NULL;
 lv_obj_t * ui_Label2 = NULL;
 lv_obj_t * ui_BLES = NULL;
 lv_obj_t * ui_BLEN = NULL;
-lv_obj_t * ui_TimeP = NULL;
+lv_obj_t * ui_autostart = NULL;
 lv_obj_t * ui_Label6 = NULL;
+lv_obj_t * ui_StartS = NULL;
 lv_obj_t * ui_RFP = NULL;
 lv_obj_t * ui_Label7 = NULL;
 lv_obj_t * ui_Label9 = NULL;
@@ -92,22 +93,29 @@ void ui_SettingPAGE_screen_init(void)
     lv_obj_set_align(ui_BLEN, LV_ALIGN_CENTER);
     lv_label_set_text(ui_BLEN, "DraARL-100000");
 
-    ui_TimeP = lv_obj_create(ui_SettingPAGE);
-    lv_obj_set_width(ui_TimeP, 310);
-    lv_obj_set_height(ui_TimeP, 40);
-    lv_obj_set_x(ui_TimeP, 0);
-    lv_obj_set_y(ui_TimeP, 10);
-    lv_obj_set_align(ui_TimeP, LV_ALIGN_CENTER);
-    lv_obj_clear_flag(ui_TimeP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    ui_autostart = lv_obj_create(ui_SettingPAGE);
+    lv_obj_set_width(ui_autostart, 310);
+    lv_obj_set_height(ui_autostart, 40);
+    lv_obj_set_x(ui_autostart, 0);
+    lv_obj_set_y(ui_autostart, 10);
+    lv_obj_set_align(ui_autostart, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_autostart, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
-    ui_Label6 = lv_label_create(ui_TimeP);
+    ui_Label6 = lv_label_create(ui_autostart);
     lv_obj_set_width(ui_Label6, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_Label6, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_Label6, -125);
+    lv_obj_set_x(ui_Label6, -117);
     lv_obj_set_y(ui_Label6, 0);
     lv_obj_set_align(ui_Label6, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_Label6, "时间:");
+    lv_label_set_text(ui_Label6, "自启动:");
     lv_obj_set_style_text_font(ui_Label6, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_StartS = lv_switch_create(ui_autostart);
+    lv_obj_set_width(ui_StartS, 50);
+    lv_obj_set_height(ui_StartS, 25);
+    lv_obj_set_x(ui_StartS, 115);
+    lv_obj_set_y(ui_StartS, 0);
+    lv_obj_set_align(ui_StartS, LV_ALIGN_CENTER);
 
     ui_RFP = lv_obj_create(ui_SettingPAGE);
     lv_obj_set_width(ui_RFP, 310);
@@ -233,8 +241,9 @@ void ui_SettingPAGE_screen_destroy(void)
     ui_Label2 = NULL;
     ui_BLES = NULL;
     ui_BLEN = NULL;
-    ui_TimeP = NULL;
+    ui_autostart = NULL;
     ui_Label6 = NULL;
+    ui_StartS = NULL;
     ui_RFP = NULL;
     ui_Label7 = NULL;
     ui_Label9 = NULL;

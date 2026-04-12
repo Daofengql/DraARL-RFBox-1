@@ -26,6 +26,7 @@
 #include "../drivers/sa818_driver.h"
 #include "../ui/ui.h"
 #include "app_logic.h"
+#include "connectivity_manager.h"
 #include "device_config.h"
 #include "edit_controller.h"
 
@@ -1103,6 +1104,9 @@ void ensure_bind_popup() {
 void show_bind_popup(const char *code, const char *hint) {
     ensure_bind_popup();
     if (!g_bind_popup) return;
+
+    connectivity_manager_hide_ble_popup();
+    edit_controller_hide_power_popup();
 
     if (g_bind_code_label) {
         lv_label_set_text(g_bind_code_label, (code && code[0] != '\0') ? code : "------");
@@ -2428,4 +2432,12 @@ void net_audio_link_update() {
 
 void net_audio_link_schedule_radio_config_sync() {
     schedule_radio_config_sync(0);
+}
+
+void net_audio_link_hide_bind_popup() {
+    hide_bind_popup();
+}
+
+bool net_audio_link_is_bind_popup_visible() {
+    return g_bind_popup_visible;
 }

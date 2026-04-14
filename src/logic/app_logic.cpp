@@ -12,6 +12,7 @@
 #include <sys/time.h>
 
 #include "../config.h"
+#include "../drivers/sa818_driver.h"
 #include "../drivers/ec11_driver.h"
 #include "../ui/ui.h"
 #include "connectivity_manager.h"
@@ -26,6 +27,7 @@ namespace {
 constexpr uint32_t KEY_LONG_PRESS_MS = 1000;
 constexpr uint32_t STARTUP_STEP_INTERVAL_MS = 350;
 constexpr uint32_t CLOCK_REFRESH_INTERVAL_MS = 1000;
+constexpr uint32_t INPUT_RESUME_AFTER_PTT_MS = 500;
 constexpr size_t STARTUP_STEP_COUNT = 6;
 
 enum class AppState {
@@ -34,7 +36,15 @@ enum class AppState {
     MAIN_READY,
 };
 
+enum class LocalInputGateState {
+    READY = 0,
+    TX_PREPARE,
+    TX_ACTIVE,
+    TX_RELEASE_GUARD,
+};
+
 AppState app_state = AppState::POWER_WAIT;
+LocalInputGateState local_input_gate_state = LocalInputGateState::READY;
 
 bool key_last_pressed = false;
 bool key_long_triggered = false;
@@ -48,6 +58,43 @@ time_t last_displayed_epoch = static_cast<time_t>(-1);
 bool time_synced = false;
 bool time_placeholder_rendered = false;
 bool timezone_initialized = false;
+uint32_t local_input_resume_at_ms = 0;
+
+void reset_local_input_state() {
+    key_last_pressed = false;
+    key_long_triggered = false;
+    key_pressed_at_ms = 0;
+}
+
+bool should_poll_local_inputs(uint32_t now_ms) {
+    if (sa818_is_tx()) {
+        local_input_gate_state = LocalInputGateState::TX_ACTIVE;
+        local_input_resume_at_ms = 0;
+        reset_local_input_state();
+        return false;
+    }
+
+    switch (local_input_gate_state) {
+        case LocalInputGateState::READY:
+            return true;
+        case LocalInputGateState::TX_PREPARE:
+            return false;
+        case LocalInputGateState::TX_ACTIVE:
+            local_input_gate_state = LocalInputGateState::TX_RELEASE_GUARD;
+            local_input_resume_at_ms = now_ms + INPUT_RESUME_AFTER_PTT_MS;
+            return false;
+        case LocalInputGateState::TX_RELEASE_GUARD:
+            if (local_input_resume_at_ms != 0 &&
+                static_cast<int32_t>(now_ms - local_input_resume_at_ms) >= 0) {
+                local_input_gate_state = LocalInputGateState::READY;
+                local_input_resume_at_ms = 0;
+                return true;
+            }
+            return false;
+        default:
+            return true;
+    }
+}
 
 bool init_spiffs_storage() {
     if (SPIFFS.begin(false)) {
@@ -324,6 +371,8 @@ void app_logic_init() {
     }
 
     app_state = AppState::POWER_WAIT;
+    local_input_gate_state = LocalInputGateState::READY;
+    local_input_resume_at_ms = 0;
     auto_start_enabled = device_config::load_auto_start_enabled();
     refresh_time_widgets(true);
     if (auto_start_enabled) {
@@ -336,15 +385,17 @@ void app_logic_init() {
 }
 
 void app_logic_update() {
-    ec11_update();
-
     const uint32_t now_ms = millis();
-    update_power_key(now_ms);
     update_startup_sequence(now_ms);
     refresh_time_widgets(false);
     connectivity_manager_update();
     net_audio_link_update();
-    edit_controller_update();
+
+    if (should_poll_local_inputs(now_ms)) {
+        ec11_update();
+        update_power_key(now_ms);
+        edit_controller_update();
+    }
 }
 
 void app_logic_set_time_from_server_ms(int64_t unix_ms) {
@@ -374,4 +425,22 @@ void app_logic_set_time_from_server_ms(int64_t unix_ms) {
     Serial.printf("[TIME] Synced from server: %lld ms local=%s\n",
                   static_cast<long long>(unix_ms),
                   text[0] != '\0' ? text : "<invalid>");
+}
+
+void app_logic_on_ptt_prepare() {
+    local_input_gate_state = LocalInputGateState::TX_PREPARE;
+    local_input_resume_at_ms = 0;
+    reset_local_input_state();
+}
+
+void app_logic_on_ptt_started() {
+    local_input_gate_state = LocalInputGateState::TX_ACTIVE;
+    local_input_resume_at_ms = 0;
+    reset_local_input_state();
+}
+
+void app_logic_on_ptt_released() {
+    local_input_gate_state = LocalInputGateState::TX_RELEASE_GUARD;
+    local_input_resume_at_ms = millis() + INPUT_RESUME_AFTER_PTT_MS;
+    reset_local_input_state();
 }

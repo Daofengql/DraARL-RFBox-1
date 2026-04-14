@@ -3,21 +3,27 @@
 #include "../config.h"
 
 namespace {
-RotaryEncoder *encoder = nullptr;
 EC11Callback event_callback = nullptr;
 
 int32_t counter = 0;
-int32_t last_encoder_value = 0;
 EC11Direction last_direction = EC11Direction::NONE;
 
 bool button_pressed = false;
-bool last_button_state = false;
+bool button_last_raw_state = false;
+bool button_stable_state = false;
 uint32_t button_pressed_at_ms = 0;
+uint32_t button_last_change_at_ms = 0;
 uint32_t long_press_threshold_ms = 800;
+uint32_t button_debounce_ms = 25;
 
 bool acceleration_enabled = false;
 uint32_t last_rotate_time = 0;
+uint32_t last_rotation_emit_at_ms = 0;
 int rotate_speed = 1;
+
+uint8_t last_encoder_state = 0;
+int8_t encoder_accumulator = 0;
+uint32_t rotation_guard_ms = 12;
 
 constexpr uint8_t EVENT_QUEUE_CAPACITY = 32;
 struct QueuedEvent {
@@ -29,22 +35,31 @@ QueuedEvent event_queue[EVENT_QUEUE_CAPACITY];
 uint8_t event_queue_head = 0;
 uint8_t event_queue_tail = 0;
 uint8_t event_queue_size = 0;
-portMUX_TYPE event_queue_lock = portMUX_INITIALIZER_UNLOCKED;
+
+// Valid quadrature state transitions. Using the same table shape as the previous
+// interrupt-driven library lets us keep the existing CW/CCW behavior.
+constexpr int8_t ENCODER_TRANSITIONS[16] = {
+    0, -1, 1, 0,
+    1, 0, 0, -1,
+    -1, 0, 0, 1,
+    0, 1, -1, 0
+};
+
+uint8_t read_encoder_state() {
+    return static_cast<uint8_t>(((digitalRead(EC11_CLK) == HIGH) ? 0x02U : 0x00U) |
+                                ((digitalRead(EC11_DT) == HIGH) ? 0x01U : 0x00U));
+}
 
 void reset_event_queue() {
-    portENTER_CRITICAL(&event_queue_lock);
     event_queue_head = 0;
     event_queue_tail = 0;
     event_queue_size = 0;
-    portEXIT_CRITICAL(&event_queue_lock);
 }
 
 void queue_event(EC11Event event, int32_t value) {
     if (event == EC11Event::NONE) {
         return;
     }
-
-    portENTER_CRITICAL(&event_queue_lock);
 
     // Keep newest events when queue is full to avoid UI lock-up on fast rotation.
     if (event_queue_size >= EVENT_QUEUE_CAPACITY) {
@@ -56,23 +71,17 @@ void queue_event(EC11Event event, int32_t value) {
     event_queue[event_queue_head].value = value;
     event_queue_head = static_cast<uint8_t>((event_queue_head + 1U) % EVENT_QUEUE_CAPACITY);
     ++event_queue_size;
-
-    portEXIT_CRITICAL(&event_queue_lock);
 }
 
 bool pop_event(QueuedEvent &out) {
-    bool has_event = false;
-
-    portENTER_CRITICAL(&event_queue_lock);
-    if (event_queue_size > 0) {
-        out = event_queue[event_queue_tail];
-        event_queue_tail = static_cast<uint8_t>((event_queue_tail + 1U) % EVENT_QUEUE_CAPACITY);
-        --event_queue_size;
-        has_event = true;
+    if (event_queue_size == 0) {
+        return false;
     }
-    portEXIT_CRITICAL(&event_queue_lock);
 
-    return has_event;
+    out = event_queue[event_queue_tail];
+    event_queue_tail = static_cast<uint8_t>((event_queue_tail + 1U) % EVENT_QUEUE_CAPACITY);
+    --event_queue_size;
+    return true;
 }
 
 void emit_event(EC11Event event, int32_t value) {
@@ -102,17 +111,23 @@ int get_rotate_speed() {
     return 1;
 }
 
-void on_knob_turned(long value) {
-    const int32_t diff = static_cast<int32_t>(value) - last_encoder_value;
-    if (diff == 0) {
+void apply_rotation_step(int32_t detents) {
+    if (detents == 0) {
         return;
     }
 
+    const uint32_t now = millis();
+    if (last_rotation_emit_at_ms != 0 &&
+        (now - last_rotation_emit_at_ms) < rotation_guard_ms) {
+        return;
+    }
+
+    last_rotation_emit_at_ms = now;
     rotate_speed = get_rotate_speed();
-    const int32_t steps = (diff > 0) ? diff : -diff;
+    const int32_t steps = (detents > 0) ? detents : -detents;
     const int32_t delta = steps * rotate_speed;
 
-    if (diff > 0) {
+    if (detents > 0) {
         last_direction = EC11Direction::COUNTER_CLOCKWISE;
         counter += delta;
         queue_event(EC11Event::ROTATE_CCW, delta);
@@ -121,51 +136,47 @@ void on_knob_turned(long value) {
         counter -= delta;
         queue_event(EC11Event::ROTATE_CW, delta);
     }
-
-    last_encoder_value = static_cast<int32_t>(value);
-}
-
-void on_button_pressed(unsigned long duration) {
-    (void)duration;
 }
 } // namespace
 
 bool ec11_init(void) {
     ec11_deinit();
 
-    encoder = new RotaryEncoder(EC11_CLK, EC11_DT, EC11_SW);
-    if (!encoder) {
-        return false;
-    }
-
-    encoder->setEncoderType(EncoderType::HAS_PULLUP);
-    encoder->setBoundaries(-1000000, 1000000, false);
-    encoder->onTurned(&on_knob_turned);
-    encoder->onPressed(&on_button_pressed);
-    encoder->begin();
-
+    pinMode(EC11_CLK, INPUT_PULLUP);
+    pinMode(EC11_DT, INPUT_PULLUP);
     pinMode(EC11_SW, INPUT_PULLUP);
 
     counter = 0;
-    last_encoder_value = 0;
     last_direction = EC11Direction::NONE;
     button_pressed = false;
-    last_button_state = false;
+    button_last_raw_state = (digitalRead(EC11_SW) == LOW);
+    button_stable_state = button_last_raw_state;
     button_pressed_at_ms = 0;
+    button_last_change_at_ms = millis();
     rotate_speed = 1;
     last_rotate_time = 0;
+    last_rotation_emit_at_ms = 0;
+    last_encoder_state = read_encoder_state();
+    encoder_accumulator = 0;
     reset_event_queue();
 
     return true;
 }
 
 void ec11_deinit(void) {
-    if (encoder) {
-        delete encoder;
-        encoder = nullptr;
-    }
-
     event_callback = nullptr;
+    button_pressed = false;
+    button_last_raw_state = false;
+    button_stable_state = false;
+    button_pressed_at_ms = 0;
+    button_last_change_at_ms = 0;
+    last_direction = EC11Direction::NONE;
+    counter = 0;
+    last_rotate_time = 0;
+    last_rotation_emit_at_ms = 0;
+    rotate_speed = 1;
+    last_encoder_state = 0;
+    encoder_accumulator = 0;
     reset_event_queue();
 }
 
@@ -194,7 +205,8 @@ void ec11_set_acceleration(bool enable) {
 }
 
 void ec11_set_debounce(uint32_t debounce_ms) {
-    (void)debounce_ms;
+    debounce_ms = (debounce_ms == 0U) ? 1U : debounce_ms;
+    button_debounce_ms = debounce_ms;
 }
 
 void ec11_set_long_press_threshold(uint32_t threshold_ms) {
@@ -202,27 +214,50 @@ void ec11_set_long_press_threshold(uint32_t threshold_ms) {
 }
 
 void ec11_update(void) {
-    const bool current_button_state = (digitalRead(EC11_SW) == LOW);
+    const uint32_t now = millis();
 
-    if (current_button_state && !last_button_state) {
-        button_pressed = true;
-        button_pressed_at_ms = millis();
-        queue_event(EC11Event::BUTTON_PRESS, 0);
-    }
+    const uint8_t current_encoder_state = read_encoder_state();
+    if (current_encoder_state != last_encoder_state) {
+        const uint8_t transition = static_cast<uint8_t>(((last_encoder_state & 0x03U) << 2U) |
+                                                        (current_encoder_state & 0x03U));
+        encoder_accumulator = static_cast<int8_t>(encoder_accumulator + ENCODER_TRANSITIONS[transition & 0x0FU]);
+        last_encoder_state = current_encoder_state;
 
-    if (!current_button_state && last_button_state) {
-        button_pressed = false;
-        const uint32_t duration = millis() - button_pressed_at_ms;
-
-        queue_event(EC11Event::BUTTON_RELEASE, static_cast<int32_t>(duration));
-        if (duration >= long_press_threshold_ms) {
-            queue_event(EC11Event::BUTTON_LONG_PRESS, static_cast<int32_t>(duration));
-        } else {
-            queue_event(EC11Event::BUTTON_CLICK, static_cast<int32_t>(duration));
+        if (encoder_accumulator >= 4) {
+            apply_rotation_step(1);
+            encoder_accumulator = 0;
+        } else if (encoder_accumulator <= -4) {
+            apply_rotation_step(-1);
+            encoder_accumulator = 0;
         }
     }
 
-    last_button_state = current_button_state;
+    const bool current_button_raw = (digitalRead(EC11_SW) == LOW);
+    if (current_button_raw != button_last_raw_state) {
+        button_last_raw_state = current_button_raw;
+        button_last_change_at_ms = now;
+    }
+
+    if (current_button_raw != button_stable_state &&
+        (now - button_last_change_at_ms) >= button_debounce_ms) {
+        button_stable_state = current_button_raw;
+
+        if (button_stable_state) {
+            button_pressed = true;
+            button_pressed_at_ms = now;
+            queue_event(EC11Event::BUTTON_PRESS, 0);
+        } else {
+            button_pressed = false;
+            const uint32_t duration = now - button_pressed_at_ms;
+
+            queue_event(EC11Event::BUTTON_RELEASE, static_cast<int32_t>(duration));
+            if (duration >= long_press_threshold_ms) {
+                queue_event(EC11Event::BUTTON_LONG_PRESS, static_cast<int32_t>(duration));
+            } else {
+                queue_event(EC11Event::BUTTON_CLICK, static_cast<int32_t>(duration));
+            }
+        }
+    }
 
     QueuedEvent event = {};
     while (pop_event(event)) {

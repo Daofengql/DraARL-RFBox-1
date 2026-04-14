@@ -1211,8 +1211,14 @@ void set_edit_stage(EditStage stage) {
     refresh_edit_widgets();
 }
 
-void enter_edit_session() {
+bool enter_edit_session() {
+    if (sa818_is_tx()) {
+        Serial.println("[EDIT] blocked while RF TX is active.");
+        return false;
+    }
+
     set_edit_stage(EditStage::TX_FREQ);
+    return true;
 }
 
 void exit_edit_session() {
@@ -2022,6 +2028,10 @@ void edit_controller_update() {
         return;
     }
 
+    if (sa818_is_tx()) {
+        return;
+    }
+
     const bool current_sql_state = sa818_is_rx();
     if (current_sql_state == sql_rx_active) {
         return;
@@ -2249,6 +2259,11 @@ void edit_controller_get_radio_config(device_config::RadioConfig &config) {
 }
 
 bool edit_controller_set_radio_config(const device_config::RadioConfig &config, bool persist) {
+    if (sa818_is_tx()) {
+        Serial.println("External radio config apply blocked while RF TX is active.");
+        return false;
+    }
+
     apply_runtime_radio_config(config);
     radio_cfg_dirty = !persist;
 
@@ -2316,4 +2331,8 @@ void edit_controller_hide_power_popup() {
 
 bool edit_controller_is_power_popup_visible() {
     return is_power_popup_visible_internal();
+}
+
+bool edit_controller_is_editing() {
+    return is_editing_session_active();
 }

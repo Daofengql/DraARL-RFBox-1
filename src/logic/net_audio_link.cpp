@@ -1132,6 +1132,7 @@ void stop_voice_bridge() {
     on_voice_bridge_stopped(now_ms);
     if (g_voice_state == VoiceBridgeState::NET_TO_RF_ACTIVE) {
         sa818_stop_tx();
+        app_logic_on_ptt_released();
         edit_controller_set_network_bridge_active(false);
     }
     edit_controller_set_network_bridge_source(nullptr, 0);
@@ -1171,7 +1172,14 @@ bool mark_voice_packet_received() {
         g_rf_guard_budget_recovered = false;
     }
 
+    if (edit_controller_is_editing()) {
+        ++g_audio_rx_stats.rf_guard_drop;
+        return false;
+    }
+
+    app_logic_on_ptt_prepare();
     sa818_start_tx();
+    app_logic_on_ptt_started();
     g_voice_state = VoiceBridgeState::NET_TO_RF_ACTIVE;
     edit_controller_set_network_bridge_active(true);
     on_voice_bridge_started(now_ms);

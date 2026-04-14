@@ -3,7 +3,6 @@
 
 #include <Arduino.h>
 #include <functional>
-#include <ESP32RotaryEncoder.h>
 
 enum class EC11Direction {
     NONE = 0,

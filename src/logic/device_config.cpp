@@ -280,7 +280,7 @@ bool has_wifi_credentials(const WiFiConfig &config) {
 }
 
 bool is_valid_device_node_ssid(uint8_t ssid) {
-    return (ssid >= 1 && ssid <= 99) || (ssid >= 106 && ssid <= 235);
+    return (ssid >= 1 && ssid <= 99) || (ssid >= 106 && ssid <= 254);
 }
 
 uint8_t sanitize_backlight_pwm(uint8_t pwm) {

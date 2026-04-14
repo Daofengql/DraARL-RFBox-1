@@ -62,6 +62,7 @@ bool g_main_screen_ready = false;
 bool g_wifi_attempt_active = false;
 bool g_wifi_manual_disconnect = false;
 bool g_wifi_connected_once = false;
+bool g_wifi_boot_popup_allowed = true;
 bool g_wifi_retry_suspended = false;
 uint8_t g_wifi_boot_failures = 0;
 uint32_t g_wifi_attempt_started_at_ms = 0;
@@ -420,7 +421,6 @@ void begin_wifi_connect_attempt(bool reset_failures) {
 
     if (reset_failures) {
         g_wifi_boot_failures = 0;
-        g_wifi_connected_once = false;
         g_wifi_retry_suspended = false;
     } else if (g_wifi_retry_suspended) {
         // BLE provisioning fallback is active, suppress background Wi-Fi churn.
@@ -687,7 +687,7 @@ bool parse_server_config(JsonObjectConst input, device_config::ServerConfig &con
     copy_cstr(config.device_auth_password, input["device_auth_password"] | "");
 
     if (config.node_ssid != 0 && !device_config::is_valid_device_node_ssid(config.node_ssid)) {
-        error = "Node SSID must be 1-99 or 106-235";
+        error = "Node SSID must be 1-99 or 106-254";
         return false;
     }
     if (config.dmr_id > 0xFFFFFFUL) {
@@ -1043,7 +1043,7 @@ void handle_wifi_attempt_failure(const char *reason) {
     g_wifi_state = WiFiState::FAILED;
     g_wifi_rssi = 0;
 
-    if (!g_wifi_connected_once) {
+    if (g_wifi_boot_popup_allowed && !g_wifi_connected_once) {
         if (g_wifi_boot_failures < 255) {
             ++g_wifi_boot_failures;
         }
@@ -1096,6 +1096,8 @@ void connectivity_manager_init() {
 
     g_wifi_state = device_config::has_wifi_credentials(g_config.wifi) ? WiFiState::FAILED : WiFiState::NO_CONFIG;
     g_wifi_rssi = 0;
+    g_wifi_connected_once = false;
+    g_wifi_boot_popup_allowed = true;
     g_manager_initialized = true;
 }
 
@@ -1108,7 +1110,9 @@ void connectivity_manager_on_main_screen_enter() {
     refresh_status_icons();
 
     if (!device_config::has_wifi_credentials(g_config.wifi)) {
-        maybe_start_ble_for_boot_failure("WiFi configuration missing. BLE GATT provisioning is active.");
+        if (g_wifi_boot_popup_allowed) {
+            maybe_start_ble_for_boot_failure("WiFi configuration missing. BLE GATT provisioning is active.");
+        }
         g_wifi_state = WiFiState::NO_CONFIG;
         notify_status();
         return;
@@ -1130,6 +1134,7 @@ void connectivity_manager_update() {
         g_wifi_attempt_active = false;
         g_wifi_state = WiFiState::CONNECTED;
         g_wifi_connected_once = true;
+        g_wifi_boot_popup_allowed = false;
         g_wifi_boot_failures = 0;
         g_wifi_rssi = WiFi.RSSI();
         notify_status();

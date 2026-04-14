@@ -41,6 +41,12 @@ constexpr uint8_t TYPE_OPUS_16K = 5;
 constexpr uint8_t TYPE_SERVER_VOICE = 6;
 
 constexpr uint8_t DEV_MODEL_ESP32 = 1;
+constexpr size_t HEARTBEAT_GPS_PAYLOAD_SIZE = 24;
+constexpr size_t HEARTBEAT_MAC_TEXT_SIZE = 17;
+constexpr uint8_t HEARTBEAT_STATUS_SUCCESS = 0;
+constexpr uint8_t HEARTBEAT_STATUS_DEVICE_CONFLICT_ONLINE = 1;
+constexpr uint8_t HEARTBEAT_STATUS_RESERVED_SSID = 2;
+constexpr uint8_t HEARTBEAT_STATUS_AUTH_FAILED = 3;
 
 constexpr uint32_t OPUS_SAMPLE_RATE = 16000;
 constexpr uint8_t OPUS_CHANNELS = 1;
@@ -245,6 +251,8 @@ bool g_bind_popup_visible = false;
 
 void refresh_server_status_widgets();
 void stop_voice_bridge();
+void on_auth_failed();
+void on_authenticated(const DraPacketHeader &header);
 
 template <size_t N>
 void copy_cstr(char (&dest)[N], const char *src) {
@@ -977,6 +985,32 @@ String get_device_mac() {
     return String(text);
 }
 
+String normalize_mac_text(String mac) {
+    mac.trim();
+    mac.toUpperCase();
+    if (mac.length() != static_cast<int>(HEARTBEAT_MAC_TEXT_SIZE)) {
+        return String();
+    }
+
+    for (int i = 0; i < mac.length(); ++i) {
+        const char ch = mac[i];
+        if ((i % 3) == 2) {
+            if (ch != ':') {
+                return String();
+            }
+            continue;
+        }
+
+        const bool is_digit = (ch >= '0' && ch <= '9');
+        const bool is_hex_upper = (ch >= 'A' && ch <= 'F');
+        if (!is_digit && !is_hex_upper) {
+            return String();
+        }
+    }
+
+    return mac;
+}
+
 String normalized_api_base_url() {
     String base(g_config.server.http_api_base_url);
     if (base.length() == 0) {
@@ -1458,6 +1492,35 @@ bool send_udp_packet(uint8_t type, const uint8_t *payload, size_t payload_len) {
     return g_udp.endPacket() == 1;
 }
 
+size_t build_heartbeat_payload(uint8_t *payload, size_t payload_cap) {
+    if (!payload || payload_cap < HEARTBEAT_GPS_PAYLOAD_SIZE) {
+        return 0;
+    }
+
+    memset(payload, 0, HEARTBEAT_GPS_PAYLOAD_SIZE);
+
+    const String normalized_mac = normalize_mac_text(get_device_mac());
+    const size_t mac_len = static_cast<size_t>(normalized_mac.length());
+    if ((HEARTBEAT_GPS_PAYLOAD_SIZE + mac_len) > payload_cap) {
+        return 0;
+    }
+
+    if (mac_len > 0) {
+        memcpy(payload + HEARTBEAT_GPS_PAYLOAD_SIZE, normalized_mac.c_str(), mac_len);
+    }
+
+    return HEARTBEAT_GPS_PAYLOAD_SIZE + mac_len;
+}
+
+bool send_heartbeat_packet() {
+    uint8_t payload[HEARTBEAT_GPS_PAYLOAD_SIZE + HEARTBEAT_MAC_TEXT_SIZE] = {0};
+    const size_t payload_len = build_heartbeat_payload(payload, sizeof(payload));
+    if (payload_len < HEARTBEAT_GPS_PAYLOAD_SIZE) {
+        return false;
+    }
+    return send_udp_packet(TYPE_HEARTBEAT, payload, payload_len);
+}
+
 bool append_config_tlv(uint8_t *payload, size_t payload_cap, size_t &offset, uint8_t type, const uint8_t *value, size_t value_len) {
     if (!payload || !value || value_len > 255 || (offset + 2 + value_len) > payload_cap) {
         return false;
@@ -1809,6 +1872,59 @@ void maybe_store_call_sign(const char *call_sign) {
     save_server_config();
 }
 
+const char *heartbeat_status_label(uint8_t status) {
+    switch (status) {
+        case HEARTBEAT_STATUS_SUCCESS: return "success";
+        case HEARTBEAT_STATUS_DEVICE_CONFLICT_ONLINE: return "device_conflict_online";
+        case HEARTBEAT_STATUS_RESERVED_SSID: return "reserved_ssid";
+        case HEARTBEAT_STATUS_AUTH_FAILED: return "auth_failed";
+        default: return "unknown";
+    }
+}
+
+bool is_heartbeat_reject_status(uint8_t status) {
+    return status == HEARTBEAT_STATUS_DEVICE_CONFLICT_ONLINE ||
+           status == HEARTBEAT_STATUS_RESERVED_SSID ||
+           status == HEARTBEAT_STATUS_AUTH_FAILED;
+}
+
+void handle_heartbeat_reject(uint8_t status, const uint8_t *data, size_t data_len) {
+    char message[48] = {0};
+    if (data && data_len > 1) {
+        parse_ascii_tlv_text(data + 1, data_len - 1, message, sizeof(message));
+    }
+
+    Serial.printf("[NET][HB] rejected: status=%u label=%s message=%s state=%s\n",
+                  static_cast<unsigned int>(status),
+                  heartbeat_status_label(status),
+                  message[0] != '\0' ? message : "-",
+                  state_name(g_state));
+    on_auth_failed();
+}
+
+bool handle_heartbeat_packet(const DraPacketHeader &header, const uint8_t *data, size_t data_len) {
+    if (header.call_sign[0] != '\0') {
+        if (g_state == LinkState::UDP_AUTH_WAIT) {
+            on_authenticated(header);
+        } else {
+            maybe_store_call_sign(header.call_sign);
+        }
+        return true;
+    }
+
+    if (data && data_len > 0 && is_heartbeat_reject_status(data[0])) {
+        handle_heartbeat_reject(data[0], data, data_len);
+        return true;
+    }
+
+    if (g_state == LinkState::UDP_AUTH_WAIT) {
+        on_auth_failed();
+        return true;
+    }
+
+    return true;
+}
+
 void maybe_log_audio_stats() {
     if (!AUDIO_STATS_LOG_ENABLED) {
         return;
@@ -2088,24 +2204,17 @@ void process_udp_packet(const uint8_t *packet, size_t packet_len) {
         return;
     }
 
-    if (g_state == LinkState::UDP_AUTH_WAIT) {
-        if (header.type == TYPE_HEARTBEAT) {
-            if (header.call_sign[0] == '\0') {
-                on_auth_failed();
-                return;
-            }
-            on_authenticated(header);
-        } else if (header.type == TYPE_OPUS_16K || header.type == TYPE_SERVER_VOICE || header.type == TYPE_CONFIG) {
-            on_authenticated(header);
-        }
-    }
-
-    if (g_state != LinkState::RUNNING && g_state != LinkState::UDP_AUTH_WAIT) {
+    if (header.type == TYPE_HEARTBEAT) {
+        handle_heartbeat_packet(header, data, data_len);
         return;
     }
 
-    if (header.type == TYPE_HEARTBEAT) {
-        maybe_store_call_sign(header.call_sign);
+    if (g_state == LinkState::UDP_AUTH_WAIT &&
+        (header.type == TYPE_OPUS_16K || header.type == TYPE_SERVER_VOICE || header.type == TYPE_CONFIG)) {
+        on_authenticated(header);
+    }
+
+    if (g_state != LinkState::RUNNING && g_state != LinkState::UDP_AUTH_WAIT) {
         return;
     }
 
@@ -2209,7 +2318,7 @@ void update_state_machine() {
     if (now < g_next_action_at_ms) {
         if (g_state == LinkState::RUNNING &&
             (now - g_last_heartbeat_at_ms) >= HEARTBEAT_INTERVAL_MS) {
-            if (send_udp_packet(TYPE_HEARTBEAT, nullptr, 0)) {
+            if (send_heartbeat_packet()) {
                 g_last_heartbeat_at_ms = now;
             }
         }
@@ -2286,7 +2395,7 @@ void update_state_machine() {
             break;
 
         case LinkState::UDP_AUTH_SEND:
-            if (!send_udp_packet(TYPE_HEARTBEAT, nullptr, 0)) {
+            if (!send_heartbeat_packet()) {
                 enter_state(LinkState::UDP_AUTH_SEND, RESOLVE_RETRY_MS);
                 break;
             }
@@ -2310,7 +2419,7 @@ void update_state_machine() {
 
         case LinkState::RUNNING:
             if ((now - g_last_heartbeat_at_ms) >= HEARTBEAT_INTERVAL_MS) {
-                if (send_udp_packet(TYPE_HEARTBEAT, nullptr, 0)) {
+                if (send_heartbeat_packet()) {
                     g_last_heartbeat_at_ms = now;
                 }
             }

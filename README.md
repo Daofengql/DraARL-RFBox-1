@@ -279,6 +279,14 @@ SA818 初始化默认为 `SA818_UHF`。
 - `sql_level`
 - `power_level`
 - `tx_bandwidth`
+- `rx_tone_mode`
+- `rx_tone_value`
+- `tx_tone_mode`
+- `tx_tone_value`
+- `rf_guard_enabled`
+- `rf_guard_single_tx_limit_s`
+- `rf_guard_window_s`
+- `rf_guard_max_tx_in_window_s`
 - `timestamp`
 
 ### 配置同步行为

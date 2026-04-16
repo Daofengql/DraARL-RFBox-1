@@ -84,7 +84,7 @@ enum class PowerMenuOption : uint8_t {
 using SubAudioType = device_config::SubAudioType;
 using SubAudioSetting = device_config::SubAudioSetting;
 
-constexpr int32_t BACKLIGHT_PWM_STEP = 1;
+constexpr int32_t BACKLIGHT_PWM_STEP = 5;
 
 // SA818 manual CTCSS 1..38.
 constexpr const char *CTCSS_TONES[] = {
@@ -1432,23 +1432,23 @@ void refresh_settings_page_widgets() {
 void refresh_info_page_content() {
     hide_header_update_indicators();
 
-    // Keep value fields left-anchored so dynamic text does not "float" horizontally.
+    // Keep the original row center positions while right-aligning within the value column.
     auto align_info_value = [](lv_obj_t *label, lv_coord_t y) {
         if (!label) {
             return;
         }
         lv_obj_set_width(label, 175);
         lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
-        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_align(label, LV_ALIGN_TOP_LEFT);
-        lv_obj_set_pos(label, 118, y);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_align(label, LV_ALIGN_CENTER);
+        lv_obj_set_pos(label, 51, y);
     };
 
-    align_info_value(ui_Mac, 16);
-    align_info_value(ui_Mac1, 50);
-    align_info_value(ui_ip2, 84);
-    align_info_value(ui_Callsign, 120);
-    align_info_value(ui_username, 154);
+    align_info_value(ui_Mac, -70);
+    align_info_value(ui_Mac1, -35);
+    align_info_value(ui_ip2, 0);
+    align_info_value(ui_Callsign, 38);
+    align_info_value(ui_username, 74);
 
     device_config::DeviceConfig config = {};
     device_config::set_defaults(config);

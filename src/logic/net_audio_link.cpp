@@ -91,6 +91,10 @@ constexpr uint8_t CONFIG_TLV_RX_TONE_MODE = 0x08;
 constexpr uint8_t CONFIG_TLV_RX_TONE_VALUE = 0x09;
 constexpr uint8_t CONFIG_TLV_TX_TONE_MODE = 0x0A;
 constexpr uint8_t CONFIG_TLV_TX_TONE_VALUE = 0x0B;
+constexpr uint8_t CONFIG_TLV_RF_GUARD_ENABLED = 0x0C;
+constexpr uint8_t CONFIG_TLV_RF_GUARD_SINGLE_TX_LIMIT_S = 0x0D;
+constexpr uint8_t CONFIG_TLV_RF_GUARD_WINDOW_S = 0x0E;
+constexpr uint8_t CONFIG_TLV_RF_GUARD_MAX_TX_IN_WINDOW_S = 0x0F;
 constexpr uint8_t CONFIG_TLV_TIMESTAMP = 0x10;
 constexpr int64_t VALID_TIME_SYNC_MIN_MS = 946684800000LL;   // 2000-01-01T00:00:00Z
 constexpr int64_t VALID_TIME_SYNC_MAX_MS = 4102444800000LL;  // 2100-01-01T00:00:00Z
@@ -296,6 +300,14 @@ uint32_t read_u32_be(const uint8_t *src) {
     return value;
 }
 
+uint16_t read_u16_be(const uint8_t *src) {
+    uint16_t value = 0;
+    for (size_t i = 0; i < 2; ++i) {
+        value = static_cast<uint16_t>((value << 8) | static_cast<uint16_t>(src[i]));
+    }
+    return value;
+}
+
 int64_t read_i64_be(const uint8_t *src) {
     return static_cast<int64_t>(read_u64_be(src));
 }
@@ -329,6 +341,13 @@ void write_u32_be(uint8_t *dest, uint32_t value) {
     for (int i = 3; i >= 0; --i) {
         dest[i] = static_cast<uint8_t>(value & 0xFFU);
         value >>= 8;
+    }
+}
+
+void write_u16_be(uint8_t *dest, uint16_t value) {
+    for (int i = 1; i >= 0; --i) {
+        dest[i] = static_cast<uint8_t>(value & 0xFFU);
+        value = static_cast<uint16_t>(value >> 8);
     }
 }
 
@@ -1592,6 +1611,19 @@ bool build_radio_config_payload(uint8_t *payload, size_t payload_cap, size_t &pa
     fill_tone_value_tlv(config.tx_subaudio, tone_value_buffer);
     if (!append_tlv_with_count(CONFIG_TLV_TX_TONE_VALUE, tone_value_buffer, sizeof(tone_value_buffer))) return false;
 
+    buffer1[0] = config.rf_guard_enabled ? 1U : 0U;
+    if (!append_tlv_with_count(CONFIG_TLV_RF_GUARD_ENABLED, buffer1, sizeof(buffer1))) return false;
+
+    uint8_t buffer2[2] = {0};
+    write_u16_be(buffer2, config.rf_guard_single_tx_limit_s);
+    if (!append_tlv_with_count(CONFIG_TLV_RF_GUARD_SINGLE_TX_LIMIT_S, buffer2, sizeof(buffer2))) return false;
+
+    write_u16_be(buffer2, config.rf_guard_window_s);
+    if (!append_tlv_with_count(CONFIG_TLV_RF_GUARD_WINDOW_S, buffer2, sizeof(buffer2))) return false;
+
+    write_u16_be(buffer2, config.rf_guard_max_tx_in_window_s);
+    if (!append_tlv_with_count(CONFIG_TLV_RF_GUARD_MAX_TX_IN_WINDOW_S, buffer2, sizeof(buffer2))) return false;
+
     payload[item_count_index] = item_count;
     payload_len = offset;
     return true;
@@ -1744,6 +1776,30 @@ bool handle_config_apply_payload(const uint8_t *data, size_t data_len) {
                     tx_tone_state.value_valid = true;
                 } else {
                     tx_tone_state.value_valid = false;
+                }
+                break;
+            case CONFIG_TLV_RF_GUARD_ENABLED:
+                if (value_len == 1) {
+                    updated.rf_guard_enabled = value[0] != 0;
+                    saw_radio_field = true;
+                }
+                break;
+            case CONFIG_TLV_RF_GUARD_SINGLE_TX_LIMIT_S:
+                if (value_len == 2) {
+                    updated.rf_guard_single_tx_limit_s = read_u16_be(value);
+                    saw_radio_field = true;
+                }
+                break;
+            case CONFIG_TLV_RF_GUARD_WINDOW_S:
+                if (value_len == 2) {
+                    updated.rf_guard_window_s = read_u16_be(value);
+                    saw_radio_field = true;
+                }
+                break;
+            case CONFIG_TLV_RF_GUARD_MAX_TX_IN_WINDOW_S:
+                if (value_len == 2) {
+                    updated.rf_guard_max_tx_in_window_s = read_u16_be(value);
+                    saw_radio_field = true;
                 }
                 break;
             case CONFIG_TLV_TIMESTAMP:

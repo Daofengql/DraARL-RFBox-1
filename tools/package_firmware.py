@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import zipfile
@@ -46,39 +47,58 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_json(path: Path) -> dict:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+def find_boot_app0(repo_root: Path) -> Path | None:
+    candidates = []
+
+    platformio_core_dir = os.environ.get("PLATFORMIO_CORE_DIR")
+    if platformio_core_dir:
+        candidates.append(Path(platformio_core_dir))
+
+    candidates.extend(
+        [
+            repo_root / ".platformio",
+            Path.home() / ".platformio",
+        ]
+    )
+
+    for base_dir in candidates:
+        candidate = base_dir / "packages" / "framework-arduinoespressif32" / "tools" / "partitions" / "boot_app0.bin"
+        if candidate.exists():
+            return candidate
+
+    return None
 
 
-def build_flash_entries(build_dir: Path, metadata: dict) -> list[dict]:
-    extra = metadata.get("extra", {})
+def build_flash_entries(repo_root: Path, build_dir: Path) -> list[dict]:
+    required_images = [
+        ("0x0000", build_dir / "bootloader.bin"),
+        ("0x8000", build_dir / "partitions.bin"),
+        ("0x10000", build_dir / "firmware.bin"),
+    ]
     entries: list[dict] = []
 
-    for image in extra.get("flash_images", []):
-        source = Path(image["path"])
+    for offset, source in required_images:
         if not source.exists():
-            raise FileNotFoundError(f"Missing flash image referenced by build metadata: {source}")
+            raise FileNotFoundError(f"Missing build artifact: {source}")
 
         entries.append(
             {
-                "offset": image["offset"],
+                "offset": offset,
                 "source": source,
                 "packaged_name": source.name,
             }
         )
 
-    firmware_path = build_dir / "firmware.bin"
-    if not firmware_path.exists():
-        raise FileNotFoundError(f"Missing firmware image: {firmware_path}")
-
-    entries.append(
-        {
-            "offset": extra.get("application_offset", "0x10000"),
-            "source": firmware_path,
-            "packaged_name": firmware_path.name,
-        }
-    )
+    boot_app0_path = find_boot_app0(repo_root)
+    if boot_app0_path is not None:
+        entries.insert(
+            2,
+            {
+                "offset": "0xe000",
+                "source": boot_app0_path,
+                "packaged_name": boot_app0_path.name,
+            },
+        )
 
     return entries
 
@@ -139,12 +159,7 @@ def main() -> int:
 
     repo_root = Path(__file__).resolve().parent.parent
     build_dir = repo_root / ".pio" / "build" / args.env
-    metadata_path = build_dir / "idedata.json"
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Build metadata not found: {metadata_path}")
-
-    metadata = load_json(metadata_path)
-    flash_entries = build_flash_entries(build_dir, metadata)
+    flash_entries = build_flash_entries(repo_root, build_dir)
 
     package_base = "-".join(
         [

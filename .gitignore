@@ -17,6 +17,7 @@
 lvglProj/backup/
 lvglProj/cache/
 build/
+dist/
 
 # Libraries (managed by lib_deps)
 lib/LovyanGFX-master/

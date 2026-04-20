@@ -111,6 +111,33 @@ void sanitize_server_config(ServerConfig &config) {
     }
 }
 
+void sanitize_ota_config(OTAConfig &config) {
+    config.available_version[OTA_VERSION_MAX_LEN] = '\0';
+    config.download_url[OTA_DOWNLOAD_URL_MAX_LEN] = '\0';
+    config.file_hash[OTA_HASH_MAX_LEN] = '\0';
+    config.file_hash_algorithm[OTA_HASH_ALGO_MAX_LEN] = '\0';
+    if (!config.has_pending_update) {
+        config.available_version[0] = '\0';
+        config.download_url[0] = '\0';
+        config.file_hash[0] = '\0';
+        config.file_hash_algorithm[0] = '\0';
+        config.file_size = 0;
+    }
+}
+
+void load_ota_config(Preferences &prefs, OTAConfig &config) {
+    set_defaults(config);
+    config.auto_check_enabled = prefs.getBool("ota_auto", true);
+    config.last_check_time = prefs.getULong("ota_last", 0);
+    load_optional_string(prefs, "ota_ver", config.available_version, sizeof(config.available_version));
+    config.has_pending_update = prefs.getBool("ota_pend", false);
+    load_optional_string(prefs, "ota_url", config.download_url, sizeof(config.download_url));
+    load_optional_string(prefs, "ota_hash", config.file_hash, sizeof(config.file_hash));
+    load_optional_string(prefs, "ota_alg", config.file_hash_algorithm, sizeof(config.file_hash_algorithm));
+    config.file_size = prefs.getULong("ota_size", 0);
+    sanitize_ota_config(config);
+}
+
 void load_wifi_config(Preferences &prefs, WiFiConfig &config) {
     set_defaults(config);
     load_optional_string(prefs, "wifi_ssid", config.ssid, sizeof(config.ssid));
@@ -160,6 +187,7 @@ void set_defaults(DeviceConfig &config) {
     set_defaults(config.wifi);
     set_defaults(config.radio);
     set_defaults(config.server);
+    set_defaults(config.ota);
 }
 
 void set_defaults(WiFiConfig &config) {
@@ -191,6 +219,14 @@ void set_defaults(ServerConfig &config) {
     copy_cstr(config.http_api_base_url, DEFAULT_SERVER_HTTP_API_BASE_URL);
 }
 
+void set_defaults(OTAConfig &config) {
+    memset(&config, 0, sizeof(config));
+    config.auto_check_enabled = true;
+    config.last_check_time = 0;
+    config.has_pending_update = false;
+    config.file_size = 0;
+}
+
 bool load(DeviceConfig &config) {
     set_defaults(config);
 
@@ -205,6 +241,7 @@ bool load(DeviceConfig &config) {
     load_wifi_config(prefs, config.wifi);
     load_radio_config(prefs, config.radio);
     load_server_config(prefs, config.server);
+    load_ota_config(prefs, config.ota);
     prefs.end();
     return true;
 }
@@ -247,6 +284,15 @@ bool save(const DeviceConfig &config) {
     prefs.putString("svr_acc", config.server.account);
     prefs.putString("svr_pwd", config.server.device_auth_password);
 
+    prefs.putBool("ota_auto", config.ota.auto_check_enabled);
+    prefs.putULong("ota_last", config.ota.last_check_time);
+    prefs.putString("ota_ver", config.ota.available_version);
+    prefs.putBool("ota_pend", config.ota.has_pending_update);
+    prefs.putString("ota_url", config.ota.download_url);
+    prefs.putString("ota_hash", config.ota.file_hash);
+    prefs.putString("ota_alg", config.ota.file_hash_algorithm);
+    prefs.putULong("ota_size", config.ota.file_size);
+
     prefs.end();
     return true;
 }
@@ -272,6 +318,14 @@ bool save_server(const ServerConfig &config) {
     load(full_config);
     full_config.server = config;
     sanitize_server_config(full_config.server);
+    return save(full_config);
+}
+
+bool save_ota(const OTAConfig &config) {
+    DeviceConfig full_config;
+    load(full_config);
+    full_config.ota = config;
+    sanitize_ota_config(full_config.ota);
     return save(full_config);
 }
 

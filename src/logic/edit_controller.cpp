@@ -55,6 +55,7 @@ enum class EditMode {
 
 enum class SettingsCursor : uint8_t {
     BRIGHTNESS = 0,
+    UPDATE,
     BLE,
     AUTOSTART,
     RF,
@@ -147,10 +148,17 @@ lv_obj_t *power_popup = nullptr;
 lv_obj_t *power_popup_option_labels[3] = {nullptr, nullptr, nullptr};
 PowerMenuOption power_popup_option = PowerMenuOption::CANCEL;
 uint32_t last_settings_ble_refresh_ms = 0;
+bool update_available = false;
 uint32_t last_info_refresh_ms = 0;
+bool settings_ble_widgets_initialized = false;
+bool settings_ble_enabled_snapshot = false;
+char settings_ble_text_snapshot[33] = {0};
 
 void apply_main_screen_overrides();
+void refresh_header_update_indicators();
 void hide_header_update_indicators();
+void show_header_update_indicators();
+void refresh_update_button_state();
 void ensure_power_popup();
 void show_power_popup();
 void hide_power_popup_internal();
@@ -1285,7 +1293,7 @@ bool save_radio_config_immediately(bool schedule_sync) {
 }
 
 void refresh_rf_page_widgets() {
-    hide_header_update_indicators();
+    refresh_header_update_indicators();
 
     if (ui_PWS) {
         if (radio_power_high) {
@@ -1362,21 +1370,35 @@ void set_radio_power_high(bool high, bool persist, bool schedule_sync) {
 void refresh_settings_ble_widgets() {
     const bool ble_enabled = connectivity_manager_is_ble_enabled();
     if (ui_BLES) {
-        if (ble_enabled) {
-            lv_obj_add_state(ui_BLES, LV_STATE_CHECKED);
-        } else {
-            lv_obj_clear_state(ui_BLES, LV_STATE_CHECKED);
+        if (!settings_ble_widgets_initialized || settings_ble_enabled_snapshot != ble_enabled) {
+            if (ble_enabled) {
+                lv_obj_add_state(ui_BLES, LV_STATE_CHECKED);
+            } else {
+                lv_obj_clear_state(ui_BLES, LV_STATE_CHECKED);
+            }
         }
     }
 
     const char *ble_text = ble_enabled
         ? connectivity_manager_get_ble_auth_code()
         : connectivity_manager_get_ble_device_name();
-    set_label_text_or_empty(ui_BLEN, ble_text);
+    if (!ble_text) {
+        ble_text = "";
+    }
+    if (!settings_ble_widgets_initialized ||
+        strncmp(settings_ble_text_snapshot, ble_text, sizeof(settings_ble_text_snapshot)) != 0) {
+        set_label_text_or_empty(ui_BLEN, ble_text);
+        strncpy(settings_ble_text_snapshot, ble_text, sizeof(settings_ble_text_snapshot) - 1);
+        settings_ble_text_snapshot[sizeof(settings_ble_text_snapshot) - 1] = '\0';
+    }
+
+    settings_ble_enabled_snapshot = ble_enabled;
+    settings_ble_widgets_initialized = true;
 }
 
 void refresh_settings_selection_state() {
     clear_selection_border(ui_lightP);
+    clear_selection_border(ui_autoupdate);
     clear_selection_border(ui_BLEP);
     clear_selection_border(ui_autostart);
     clear_selection_border(ui_RFP);
@@ -1390,6 +1412,9 @@ void refresh_settings_selection_state() {
     switch (settings_cursor) {
         case SettingsCursor::BRIGHTNESS:
             target = ui_lightP;
+            break;
+        case SettingsCursor::UPDATE:
+            target = ui_autoupdate;
             break;
         case SettingsCursor::BLE:
             target = ui_BLEP;
@@ -1416,7 +1441,7 @@ void refresh_settings_selection_state() {
 }
 
 void refresh_settings_page_widgets() {
-    hide_header_update_indicators();
+    refresh_header_update_indicators();
 
     if (ui_LightS) {
         lv_slider_set_range(ui_LightS, device_config::BACKLIGHT_PWM_MIN, device_config::BACKLIGHT_PWM_MAX);
@@ -1426,11 +1451,12 @@ void refresh_settings_page_widgets() {
     }
     refresh_settings_ble_widgets();
     refresh_settings_autostart_widget();
+    refresh_update_button_state();
     refresh_settings_selection_state();
 }
 
 void refresh_info_page_content() {
-    hide_header_update_indicators();
+    refresh_header_update_indicators();
 
     // Keep the original row center positions while right-aligning within the value column.
     auto align_info_value = [](lv_obj_t *label, lv_coord_t y) {
@@ -1572,7 +1598,7 @@ void move_settings_cursor(int32_t delta) {
     }
 
     int32_t cursor = static_cast<int32_t>(settings_cursor) + delta;
-    constexpr int32_t SETTINGS_ITEM_COUNT = 5;
+    constexpr int32_t SETTINGS_ITEM_COUNT = 6;
     cursor %= SETTINGS_ITEM_COUNT;
     if (cursor < 0) {
         cursor += SETTINGS_ITEM_COUNT;
@@ -1725,6 +1751,9 @@ void on_settings_button_click() {
                 case SettingsCursor::BRIGHTNESS:
                     settings_mode = SettingsMode::EDIT;
                     refresh_settings_selection_state();
+                    break;
+                case SettingsCursor::UPDATE:
+                    edit_controller_on_update_button_click();
                     break;
                 case SettingsCursor::BLE:
                     toggle_ble_from_settings();
@@ -1926,6 +1955,15 @@ void step_band(int32_t delta) {
 }
 
 void apply_main_screen_overrides() {
+    refresh_header_update_indicators();
+}
+
+void refresh_header_update_indicators() {
+    if (update_available) {
+        show_header_update_indicators();
+        return;
+    }
+
     hide_header_update_indicators();
 }
 
@@ -1943,6 +1981,33 @@ void hide_header_update_indicators() {
         lv_obj_add_flag(ui_hasNewUpdate3, LV_OBJ_FLAG_HIDDEN);
     }
 }
+
+void show_header_update_indicators() {
+    if (ui_hasNewUpdate) {
+        lv_obj_clear_flag(ui_hasNewUpdate, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ui_hasNewUpdate1) {
+        lv_obj_clear_flag(ui_hasNewUpdate1, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ui_hasNewUpdate2) {
+        lv_obj_clear_flag(ui_hasNewUpdate2, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ui_hasNewUpdate3) {
+        lv_obj_clear_flag(ui_hasNewUpdate3, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void refresh_update_button_state() {
+    if (!ui_updateBT) return;
+
+    if (update_available) {
+        lv_obj_clear_state(ui_updateBT, LV_STATE_DISABLED);
+        lv_obj_set_style_bg_color(ui_updateBT, lv_color_hex(0xFF6A00), LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else {
+        lv_obj_add_state(ui_updateBT, LV_STATE_DISABLED);
+        lv_obj_set_style_bg_color(ui_updateBT, lv_color_hex(0x808080), LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
 } // namespace
 
 void edit_controller_init() {
@@ -1951,6 +2016,9 @@ void edit_controller_init() {
     auto_start_enabled = device_config::load_auto_start_enabled();
     screen_locked = false;
     radio_cfg_dirty = false;
+    settings_ble_widgets_initialized = false;
+    settings_ble_enabled_snapshot = false;
+    settings_ble_text_snapshot[0] = '\0';
     log_radio_config("LOADED");
     set_edit_stage(EditStage::NONE);
     refresh_settings_page_widgets();
@@ -2335,4 +2403,25 @@ bool edit_controller_is_power_popup_visible() {
 
 bool edit_controller_is_editing() {
     return is_editing_session_active();
+}
+
+void edit_controller_on_update_button_click() {
+    if (!update_available) {
+        return;
+    }
+
+    // 触发按钮的点击事件
+    if (ui_updateBT) {
+        lv_event_send(ui_updateBT, LV_EVENT_CLICKED, nullptr);
+    }
+}
+
+void edit_controller_set_update_available(bool available) {
+    if (update_available == available) {
+        return;
+    }
+
+    update_available = available;
+    refresh_header_update_indicators();
+    refresh_update_button_state();
 }

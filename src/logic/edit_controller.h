@@ -21,5 +21,7 @@ void edit_controller_set_rf_overload_active(bool active);
 void edit_controller_hide_power_popup();
 bool edit_controller_is_power_popup_visible();
 bool edit_controller_is_editing();
+void edit_controller_on_update_button_click();
+void edit_controller_set_update_available(bool available);
 
 #endif // EDIT_CONTROLLER_H

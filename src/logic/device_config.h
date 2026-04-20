@@ -16,6 +16,10 @@ constexpr size_t URL_MAX_LEN = 127;
 constexpr size_t ACCOUNT_MAX_LEN = 31;
 constexpr size_t PASSWORD_MAX_LEN = 63;
 constexpr size_t CALLSIGN_MAX_LEN = 15;
+constexpr size_t OTA_VERSION_MAX_LEN = 31;
+constexpr size_t OTA_DOWNLOAD_URL_MAX_LEN = 255;
+constexpr size_t OTA_HASH_MAX_LEN = 64;
+constexpr size_t OTA_HASH_ALGO_MAX_LEN = 15;
 constexpr uint8_t BACKLIGHT_PWM_MIN = 20;
 constexpr uint8_t BACKLIGHT_PWM_MAX = 255;
 constexpr uint16_t RF_GUARD_SINGLE_TX_LIMIT_MIN_S = 1;
@@ -76,22 +80,36 @@ struct ServerConfig {
     char device_auth_password[PASSWORD_MAX_LEN + 1];
 };
 
+struct OTAConfig {
+    bool auto_check_enabled;
+    uint32_t last_check_time;
+    char available_version[OTA_VERSION_MAX_LEN + 1];
+    bool has_pending_update;
+    char download_url[OTA_DOWNLOAD_URL_MAX_LEN + 1];
+    char file_hash[OTA_HASH_MAX_LEN + 1];
+    char file_hash_algorithm[OTA_HASH_ALGO_MAX_LEN + 1];
+    uint32_t file_size;
+};
+
 struct DeviceConfig {
     WiFiConfig wifi;
     RadioConfig radio;
     ServerConfig server;
+    OTAConfig ota;
 };
 
 void set_defaults(DeviceConfig &config);
 void set_defaults(WiFiConfig &config);
 void set_defaults(RadioConfig &config);
 void set_defaults(ServerConfig &config);
+void set_defaults(OTAConfig &config);
 
 bool load(DeviceConfig &config);
 bool save(const DeviceConfig &config);
 bool save_wifi(const WiFiConfig &config);
 bool save_radio(const RadioConfig &config);
 bool save_server(const ServerConfig &config);
+bool save_ota(const OTAConfig &config);
 
 bool has_wifi_credentials(const WiFiConfig &config);
 bool is_valid_device_node_ssid(uint8_t ssid);

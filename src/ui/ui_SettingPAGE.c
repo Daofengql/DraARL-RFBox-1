@@ -9,6 +9,10 @@ lv_obj_t * ui_SettingPAGE = NULL;
 lv_obj_t * ui_lightP = NULL;
 lv_obj_t * ui_LightS = NULL;
 lv_obj_t * ui_Label1 = NULL;
+lv_obj_t * ui_autoupdate = NULL;
+lv_obj_t * ui_Label8 = NULL;
+lv_obj_t * ui_updateBT = NULL;
+lv_obj_t * ui_Label10 = NULL;
 lv_obj_t * ui_BLEP = NULL;
 lv_obj_t * ui_Label2 = NULL;
 lv_obj_t * ui_BLES = NULL;
@@ -63,6 +67,39 @@ void ui_SettingPAGE_screen_init(void)
     lv_label_set_text(ui_Label1, "亮度:");
     lv_obj_set_style_text_font(ui_Label1, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
 
+    ui_autoupdate = lv_obj_create(ui_SettingPAGE);
+    lv_obj_set_width(ui_autoupdate, 155);
+    lv_obj_set_height(ui_autoupdate, 40);
+    lv_obj_set_x(ui_autoupdate, 77);
+    lv_obj_set_y(ui_autoupdate, 10);
+    lv_obj_set_align(ui_autoupdate, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_autoupdate, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_Label8 = lv_label_create(ui_autoupdate);
+    lv_obj_set_width(ui_Label8, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Label8, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Label8, -50);
+    lv_obj_set_y(ui_Label8, 0);
+    lv_obj_set_align(ui_Label8, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Label8, "固件:");
+    lv_obj_set_style_text_font(ui_Label8, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_updateBT = lv_btn_create(ui_autoupdate);
+    lv_obj_set_width(ui_updateBT, 70);
+    lv_obj_set_height(ui_updateBT, 30);
+    lv_obj_set_x(ui_updateBT, 30);
+    lv_obj_set_y(ui_updateBT, 0);
+    lv_obj_set_align(ui_updateBT, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_updateBT, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
+    lv_obj_clear_flag(ui_updateBT, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_Label10 = lv_label_create(ui_updateBT);
+    lv_obj_set_width(ui_Label10, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Label10, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_align(ui_Label10, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Label10, "更新");
+    lv_obj_set_style_text_font(ui_Label10, &ui_font_system, LV_PART_MAIN | LV_STATE_DEFAULT);
+
     ui_BLEP = lv_obj_create(ui_SettingPAGE);
     lv_obj_set_width(ui_BLEP, 310);
     lv_obj_set_height(ui_BLEP, 40);
@@ -94,9 +131,9 @@ void ui_SettingPAGE_screen_init(void)
     lv_label_set_text(ui_BLEN, "DraARL-100000");
 
     ui_autostart = lv_obj_create(ui_SettingPAGE);
-    lv_obj_set_width(ui_autostart, 310);
+    lv_obj_set_width(ui_autostart, 150);
     lv_obj_set_height(ui_autostart, 40);
-    lv_obj_set_x(ui_autostart, 0);
+    lv_obj_set_x(ui_autostart, -80);
     lv_obj_set_y(ui_autostart, 10);
     lv_obj_set_align(ui_autostart, LV_ALIGN_CENTER);
     lv_obj_clear_flag(ui_autostart, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
@@ -104,7 +141,7 @@ void ui_SettingPAGE_screen_init(void)
     ui_Label6 = lv_label_create(ui_autostart);
     lv_obj_set_width(ui_Label6, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_Label6, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_Label6, -117);
+    lv_obj_set_x(ui_Label6, -37);
     lv_obj_set_y(ui_Label6, 0);
     lv_obj_set_align(ui_Label6, LV_ALIGN_CENTER);
     lv_label_set_text(ui_Label6, "自启动:");
@@ -113,7 +150,7 @@ void ui_SettingPAGE_screen_init(void)
     ui_StartS = lv_switch_create(ui_autostart);
     lv_obj_set_width(ui_StartS, 50);
     lv_obj_set_height(ui_StartS, 25);
-    lv_obj_set_x(ui_StartS, 115);
+    lv_obj_set_x(ui_StartS, 38);
     lv_obj_set_y(ui_StartS, 0);
     lv_obj_set_align(ui_StartS, LV_ALIGN_CENTER);
 
@@ -237,6 +274,10 @@ void ui_SettingPAGE_screen_destroy(void)
     ui_lightP = NULL;
     ui_LightS = NULL;
     ui_Label1 = NULL;
+    ui_autoupdate = NULL;
+    ui_Label8 = NULL;
+    ui_updateBT = NULL;
+    ui_Label10 = NULL;
     ui_BLEP = NULL;
     ui_Label2 = NULL;
     ui_BLES = NULL;

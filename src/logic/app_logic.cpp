@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <SPIFFS.h>
+#include <WiFi.h>
 #include <lvgl.h>
 
 #include <cstdlib>
@@ -11,6 +12,9 @@
 
 #include <sys/time.h>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #include "../config.h"
 #include "../drivers/sa818_driver.h"
 #include "../drivers/ec11_driver.h"
@@ -18,7 +22,10 @@
 #include "connectivity_manager.h"
 #include "device_config.h"
 #include "edit_controller.h"
+#include "http_request_gate.h"
 #include "net_audio_link.h"
+#include "ota_update.h"
+#include "version_utils.h"
 
 // Backlight control is implemented in main.cpp.
 extern void updateBacklight(float level);
@@ -28,6 +35,7 @@ constexpr uint32_t KEY_LONG_PRESS_MS = 1000;
 constexpr uint32_t STARTUP_STEP_INTERVAL_MS = 350;
 constexpr uint32_t CLOCK_REFRESH_INTERVAL_MS = 1000;
 constexpr uint32_t INPUT_RESUME_AFTER_PTT_MS = 500;
+constexpr uint32_t OTA_CHECK_INTERVAL_MS = 3600000;  // 1小时检查一次
 constexpr size_t STARTUP_STEP_COUNT = 6;
 
 enum class AppState {
@@ -59,6 +67,169 @@ bool time_synced = false;
 bool time_placeholder_rendered = false;
 bool timezone_initialized = false;
 uint32_t local_input_resume_at_ms = 0;
+uint32_t last_ota_check_at_ms = 0;
+bool ota_check_done = false;
+bool ota_check_in_progress = false;
+device_config::OTAConfig ota_config_cache = {};
+TaskHandle_t ota_check_task_handle = nullptr;
+portMUX_TYPE ota_check_lock = portMUX_INITIALIZER_UNLOCKED;
+volatile bool ota_check_result_ready = false;
+volatile bool ota_check_result_success = false;
+ota_update::FirmwareInfo ota_check_result_info = {};
+bool ota_waiting_for_wifi_logged = false;
+bool ota_waiting_for_initial_delay_logged = false;
+bool ota_auto_check_disabled_logged = false;
+bool ota_check_in_progress_logged = false;
+
+void reconcile_pending_ota_state_on_boot(device_config::OTAConfig &config) {
+    if (!config.has_pending_update || config.available_version[0] == '\0') {
+        return;
+    }
+
+    const int compare_result = version_utils::compare(FIRMWARE_VERSION, config.available_version);
+    Serial.printf("[OTA] Boot reconcile: current=%s pending=%s compare=%d\n",
+                  FIRMWARE_VERSION,
+                  config.available_version,
+                  compare_result);
+
+    if (compare_result < 0) {
+        return;
+    }
+
+    config.has_pending_update = false;
+    config.available_version[0] = '\0';
+    config.download_url[0] = '\0';
+    config.file_hash[0] = '\0';
+    config.file_hash_algorithm[0] = '\0';
+    config.file_size = 0;
+
+    if (!device_config::save_ota(config)) {
+        Serial.println("[OTA] Failed to persist boot-reconciled OTA state.");
+        return;
+    }
+
+    Serial.println("[OTA] Cleared pending OTA state because current firmware is already up to date.");
+}
+
+void clear_cached_pending_ota_update() {
+    ota_config_cache.has_pending_update = false;
+    ota_config_cache.available_version[0] = '\0';
+    ota_config_cache.download_url[0] = '\0';
+    ota_config_cache.file_hash[0] = '\0';
+    ota_config_cache.file_hash_algorithm[0] = '\0';
+    ota_config_cache.file_size = 0;
+}
+
+void cache_pending_ota_update(const ota_update::FirmwareInfo &info, uint32_t now_ms) {
+    ota_config_cache.has_pending_update = info.has_update;
+    ota_config_cache.last_check_time = now_ms / 1000U;
+    strncpy(ota_config_cache.available_version, info.version, sizeof(ota_config_cache.available_version) - 1);
+    ota_config_cache.available_version[sizeof(ota_config_cache.available_version) - 1] = '\0';
+    strncpy(ota_config_cache.download_url, info.download_url, sizeof(ota_config_cache.download_url) - 1);
+    ota_config_cache.download_url[sizeof(ota_config_cache.download_url) - 1] = '\0';
+    strncpy(ota_config_cache.file_hash, info.file_hash, sizeof(ota_config_cache.file_hash) - 1);
+    ota_config_cache.file_hash[sizeof(ota_config_cache.file_hash) - 1] = '\0';
+    strncpy(ota_config_cache.file_hash_algorithm,
+            info.file_hash_algorithm,
+            sizeof(ota_config_cache.file_hash_algorithm) - 1);
+    ota_config_cache.file_hash_algorithm[sizeof(ota_config_cache.file_hash_algorithm) - 1] = '\0';
+    ota_config_cache.file_size = info.file_size;
+}
+
+void ota_check_task_entry(void *param) {
+    (void)param;
+
+    ota_update::FirmwareInfo info = {};
+    const bool success = ota_update::check_for_update(info);
+
+    portENTER_CRITICAL(&ota_check_lock);
+    ota_check_result_info = info;
+    ota_check_result_success = success;
+    ota_check_result_ready = true;
+    ota_check_in_progress = false;
+    ota_check_task_handle = nullptr;
+    portEXIT_CRITICAL(&ota_check_lock);
+
+    vTaskDelete(nullptr);
+}
+
+bool schedule_ota_check(uint32_t now_ms, const char *tag) {
+    if (ota_check_in_progress) {
+        return false;
+    }
+
+    ota_check_result_ready = false;
+    ota_check_in_progress = true;
+
+    BaseType_t task_ok = xTaskCreatePinnedToCore(
+        ota_check_task_entry,
+        "ota_check",
+        8192,
+        nullptr,
+        1,
+        &ota_check_task_handle,
+        tskNO_AFFINITY
+    );
+
+    if (task_ok != pdPASS) {
+        ota_check_in_progress = false;
+        ota_check_task_handle = nullptr;
+        Serial.println("[OTA] Failed to create check task.");
+        return false;
+    }
+
+    last_ota_check_at_ms = now_ms;
+    Serial.printf("[OTA] %s check scheduled (current=%s uptime=%lu ms wifi=%d ip=%s)\n",
+                  tag ? tag : "Async",
+                  FIRMWARE_VERSION,
+                  static_cast<unsigned long>(now_ms),
+                  static_cast<int>(WiFi.status()),
+                  WiFi.localIP().toString().c_str());
+    return true;
+}
+
+void consume_ota_check_result(uint32_t now_ms) {
+    if (!ota_check_result_ready) {
+        return;
+    }
+
+    ota_update::FirmwareInfo info = {};
+    bool success = false;
+
+    portENTER_CRITICAL(&ota_check_lock);
+    info = ota_check_result_info;
+    success = ota_check_result_success;
+    ota_check_result_ready = false;
+    portEXIT_CRITICAL(&ota_check_lock);
+
+    if (!success) {
+        Serial.printf("[OTA] Check failed: %s\n", ota_update::get_error_message());
+        return;
+    }
+
+    ota_config_cache.last_check_time = now_ms / 1000U;
+
+    if (info.has_update) {
+        cache_pending_ota_update(info, now_ms);
+        if (!device_config::save_ota(ota_config_cache)) {
+            Serial.println("[OTA] Failed to persist pending update info.");
+        }
+        edit_controller_set_update_available(true);
+        Serial.printf("[OTA] New firmware available: %s\n", info.version);
+        return;
+    }
+
+    const bool had_pending_update = ota_config_cache.has_pending_update;
+    clear_cached_pending_ota_update();
+    ota_config_cache.last_check_time = now_ms / 1000U;
+    if (!device_config::save_ota(ota_config_cache)) {
+        Serial.println("[OTA] Failed to persist cleared update info.");
+    }
+    if (had_pending_update) {
+        edit_controller_set_update_available(false);
+    }
+    Serial.println("[OTA] No update available.");
+}
 
 void reset_local_input_state() {
     key_last_pressed = false;
@@ -199,6 +370,76 @@ void refresh_time_widgets(bool force) {
     last_displayed_epoch = now;
 }
 
+void check_ota_update_if_needed(uint32_t now_ms) {
+    consume_ota_check_result(now_ms);
+
+    if (app_state != AppState::MAIN_READY) {
+        return;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+        if (!ota_waiting_for_wifi_logged) {
+            Serial.printf("[OTA] Waiting for WiFi before check (status=%d uptime=%lu ms)\n",
+                          static_cast<int>(WiFi.status()),
+                          static_cast<unsigned long>(now_ms));
+            ota_waiting_for_wifi_logged = true;
+        }
+        return;
+    }
+    if (ota_waiting_for_wifi_logged) {
+        Serial.printf("[OTA] WiFi ready for OTA checks. IP=%s uptime=%lu ms\n",
+                      WiFi.localIP().toString().c_str(),
+                      static_cast<unsigned long>(now_ms));
+        ota_waiting_for_wifi_logged = false;
+    }
+
+    if (!ota_config_cache.auto_check_enabled) {
+        if (!ota_auto_check_disabled_logged) {
+            Serial.printf("[OTA] Auto-check disabled in config. last_check=%lu pending=%d pending_ver=%s\n",
+                          static_cast<unsigned long>(ota_config_cache.last_check_time),
+                          ota_config_cache.has_pending_update ? 1 : 0,
+                          ota_config_cache.available_version[0] != '\0'
+                              ? ota_config_cache.available_version
+                              : "<none>");
+            ota_auto_check_disabled_logged = true;
+        }
+        return;
+    }
+    ota_auto_check_disabled_logged = false;
+
+    if (ota_check_in_progress) {
+        if (!ota_check_in_progress_logged) {
+            Serial.println("[OTA] Check task already in progress, waiting for result...");
+            ota_check_in_progress_logged = true;
+        }
+        return;
+    }
+    ota_check_in_progress_logged = false;
+
+    // 首次检查：WiFi连接后5秒
+    if (!ota_check_done && now_ms <= 5000) {
+        if (!ota_waiting_for_initial_delay_logged) {
+            Serial.printf("[OTA] Waiting first-check delay. uptime=%lu/5000 ms\n",
+                          static_cast<unsigned long>(now_ms));
+            ota_waiting_for_initial_delay_logged = true;
+        }
+        return;
+    }
+    ota_waiting_for_initial_delay_logged = false;
+
+    if (!ota_check_done && now_ms > 5000) {
+        if (schedule_ota_check(now_ms, "First")) {
+            ota_check_done = true;
+        }
+        return;
+    }
+
+    // 定时检查：每小时一次
+    if (ota_check_done && (now_ms - last_ota_check_at_ms) >= OTA_CHECK_INTERVAL_MS) {
+        schedule_ota_check(now_ms, "Periodic");
+    }
+}
+
 void enter_main_screen() {
     app_state = AppState::MAIN_READY;
 
@@ -304,11 +545,36 @@ void update_startup_sequence(uint32_t now_ms) {
         }
         case 4:
             refresh_time_widgets(true);
-            set_startup_progress(95, "[95%] Runtime checks complete");
+            set_startup_progress(90, "[90%] Runtime checks complete");
             break;
-        case 5:
+        case 5: {
+            ota_update::init();
+            device_config::DeviceConfig config;
+            device_config::load(config);
+            reconcile_pending_ota_state_on_boot(config.ota);
+            ota_config_cache = config.ota;
+            Serial.printf("[OTA] Config loaded: auto=%d last_check=%lu pending=%d pending_ver=%s api=%s current=%s model=%d\n",
+                          ota_config_cache.auto_check_enabled ? 1 : 0,
+                          static_cast<unsigned long>(ota_config_cache.last_check_time),
+                          ota_config_cache.has_pending_update ? 1 : 0,
+                          ota_config_cache.available_version[0] != '\0'
+                              ? ota_config_cache.available_version
+                              : "<none>",
+                          config.server.http_api_base_url[0] != '\0'
+                              ? config.server.http_api_base_url
+                              : "<empty>",
+                          FIRMWARE_VERSION,
+                          DEVICE_MODEL);
+
+            // 如果之前检查过有更新，显示图标
+            if (ota_config_cache.has_pending_update) {
+                Serial.printf("[OTA] Pending update available: %s\n", ota_config_cache.available_version);
+                edit_controller_set_update_available(true);
+            }
+
             set_startup_progress(100, "[100%] Boot complete, entering main screen");
             break;
+        }
         default:
             break;
     }
@@ -354,6 +620,7 @@ void update_power_key(uint32_t now_ms) {
 void app_logic_init() {
     pinMode(KEY0_PIN, INPUT_PULLUP);
     ensure_local_timezone();
+    http_request_gate::init();
 
     if (!ec11_init()) {
         Serial.println("EC11 init failed.");
@@ -374,6 +641,17 @@ void app_logic_init() {
     local_input_gate_state = LocalInputGateState::READY;
     local_input_resume_at_ms = 0;
     auto_start_enabled = device_config::load_auto_start_enabled();
+    device_config::set_defaults(ota_config_cache);
+    ota_check_task_handle = nullptr;
+    ota_check_result_ready = false;
+    ota_check_result_success = false;
+    ota_check_in_progress = false;
+    ota_check_done = false;
+    last_ota_check_at_ms = 0;
+    ota_waiting_for_wifi_logged = false;
+    ota_waiting_for_initial_delay_logged = false;
+    ota_auto_check_disabled_logged = false;
+    ota_check_in_progress_logged = false;
     refresh_time_widgets(true);
     if (auto_start_enabled) {
         Serial.println("Auto-start is enabled. Starting boot sequence.");
@@ -388,6 +666,7 @@ void app_logic_update() {
     const uint32_t now_ms = millis();
     update_startup_sequence(now_ms);
     refresh_time_widgets(false);
+    check_ota_update_if_needed(now_ms);
     connectivity_manager_update();
     net_audio_link_update();
 

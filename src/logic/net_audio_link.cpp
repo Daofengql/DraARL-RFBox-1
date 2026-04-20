@@ -29,6 +29,8 @@
 #include "connectivity_manager.h"
 #include "device_config.h"
 #include "edit_controller.h"
+#include "http_response_buffer.h"
+#include "http_request_gate.h"
 
 namespace {
 constexpr size_t DRA_HEADER_SIZE = 90;
@@ -60,6 +62,7 @@ constexpr int OPUS_COMPLEXITY = 1;
 constexpr int RT_PCM_WORK_SAMPLES = OPUS_FRAME_SAMPLES_MAX * 2;
 
 constexpr uint32_t HTTP_RETRY_MS = 5000;
+constexpr uint32_t HTTP_GATE_WAIT_MS = 1500;
 constexpr uint32_t BIND_POLL_MS = 5000;
 constexpr uint32_t DYNAMIC_CODE_REFRESH_MS = 55000;
 constexpr uint32_t REQUEST_CODE_RETRY_MS = 60000;
@@ -1063,9 +1066,17 @@ bool post_json(const char *api_path, JsonDocument &request, JsonDocument &respon
     String request_text;
     serializeJson(request, request_text);
     const String url = build_api_url(api_path);
+    http_request_gate::ScopedLock http_lock("NET_HTTP", HTTP_GATE_WAIT_MS);
+    if (!http_lock.locked()) {
+        Serial.printf("[NET][HTTP] gate busy, skip url=%s owner=%s\n",
+                      url.c_str(),
+                      http_request_gate::current_owner());
+        return false;
+    }
 
     int status = 0;
-    String response_text;
+    bool response_read_ok = false;
+    http_response_buffer::Buffer response_buffer = {};
 
     if (url.startsWith("https://")) {
         WiFiClientSecure client;
@@ -1080,7 +1091,7 @@ bool post_json(const char *api_path, JsonDocument &request, JsonDocument &respon
         http.addHeader("Content-Type", "application/json");
         status = http.POST(request_text);
         if (status > 0) {
-            response_text = http.getString();
+            response_read_ok = http_response_buffer::read_all(http, response_buffer, "NET_HTTP");
         }
         http.end();
     } else {
@@ -1095,7 +1106,7 @@ bool post_json(const char *api_path, JsonDocument &request, JsonDocument &respon
         http.addHeader("Content-Type", "application/json");
         status = http.POST(request_text);
         if (status > 0) {
-            response_text = http.getString();
+            response_read_ok = http_response_buffer::read_all(http, response_buffer, "NET_HTTP");
         }
         http.end();
     }
@@ -1105,7 +1116,14 @@ bool post_json(const char *api_path, JsonDocument &request, JsonDocument &respon
         return false;
     }
 
-    const DeserializationError parse_error = deserializeJson(response, response_text);
+    if (!response_read_ok || !response_buffer.data) {
+        Serial.printf("[NET][HTTP] %s failed to read response body.\n", url.c_str());
+        http_response_buffer::release(response_buffer);
+        return false;
+    }
+
+    const DeserializationError parse_error = deserializeJson(response, response_buffer.data, response_buffer.length);
+    http_response_buffer::release(response_buffer);
     if (parse_error) {
         Serial.printf("[NET][HTTP] parse failed: %s\n", parse_error.c_str());
         return false;

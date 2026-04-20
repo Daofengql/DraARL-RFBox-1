@@ -62,6 +62,15 @@ enum class SettingsCursor : uint8_t {
     ABOUT,
 };
 
+constexpr SettingsCursor SETTINGS_CURSOR_SEQUENCE[] = {
+    SettingsCursor::BRIGHTNESS,
+    SettingsCursor::BLE,
+    SettingsCursor::AUTOSTART,
+    SettingsCursor::UPDATE,
+    SettingsCursor::RF,
+    SettingsCursor::ABOUT,
+};
+
 enum class SettingsMode : uint8_t {
     NONE = 0,
     SELECT,
@@ -1597,14 +1606,23 @@ void move_settings_cursor(int32_t delta) {
         return;
     }
 
-    int32_t cursor = static_cast<int32_t>(settings_cursor) + delta;
-    constexpr int32_t SETTINGS_ITEM_COUNT = 6;
-    cursor %= SETTINGS_ITEM_COUNT;
-    if (cursor < 0) {
-        cursor += SETTINGS_ITEM_COUNT;
+    constexpr int32_t SETTINGS_ITEM_COUNT =
+        static_cast<int32_t>(sizeof(SETTINGS_CURSOR_SEQUENCE) / sizeof(SETTINGS_CURSOR_SEQUENCE[0]));
+
+    int32_t cursor_index = 0;
+    for (int32_t i = 0; i < SETTINGS_ITEM_COUNT; ++i) {
+        if (SETTINGS_CURSOR_SEQUENCE[i] == settings_cursor) {
+            cursor_index = i;
+            break;
+        }
     }
 
-    settings_cursor = static_cast<SettingsCursor>(cursor);
+    cursor_index = (cursor_index + delta) % SETTINGS_ITEM_COUNT;
+    if (cursor_index < 0) {
+        cursor_index += SETTINGS_ITEM_COUNT;
+    }
+
+    settings_cursor = SETTINGS_CURSOR_SEQUENCE[cursor_index];
     refresh_settings_selection_state();
 }
 

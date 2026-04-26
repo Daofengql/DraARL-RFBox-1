@@ -73,6 +73,8 @@ constexpr uint32_t HEARTBEAT_INTERVAL_MS = 5000;
 constexpr uint32_t CONFIG_SYNC_RETRY_MS = 1000;
 constexpr uint32_t VOICE_TX_TIMEOUT_MS = 600;
 constexpr uint32_t VOICE_BRIDGE_PTT_SETTLE_MS = 20;
+constexpr uint32_t RF_CAPTURE_RESUME_MIN_GUARD_MS = 900;
+constexpr uint32_t RF_CAPTURE_SQL_QUIET_MS = 250;
 constexpr uint32_t RF_GUARD_RECOVER_MIN_BUDGET_MS = 2000;
 constexpr uint32_t RF_GUARD_NEXT_BURST_GAP_MS = 3000;
 constexpr bool AUDIO_STATS_LOG_ENABLED = false;
@@ -240,6 +242,10 @@ bool g_rf_guard_budget_recovered = false;
 uint32_t g_rf_guard_trip_single_count = 0;
 uint32_t g_rf_guard_trip_duty_count = 0;
 const char *g_rf_guard_last_trip_reason = "none";
+uint32_t g_rf_capture_block_until_ms = 0;
+uint32_t g_rf_capture_sql_quiet_since_ms = 0;
+bool g_rf_capture_wait_sql_clear = false;
+bool g_rf_capture_adc_muted = false;
 
 // Half-duplex runtime workspace:
 // One packet buffer + one PCM buffer are time-division multiplexed by RX/TX/decode path.
@@ -1198,13 +1204,67 @@ void hide_bind_popup() {
     g_bind_popup_visible = false;
 }
 
+bool time_reached(uint32_t now_ms, uint32_t target_ms) {
+    return target_ms == 0 || static_cast<int32_t>(now_ms - target_ms) >= 0;
+}
+
+void set_rf_capture_adc_muted(bool mute) {
+    if (!g_codec_ready || g_rf_capture_adc_muted == mute) {
+        return;
+    }
+
+    es8388_set_adc_mute(mute);
+    g_rf_capture_adc_muted = mute;
+}
+
+void begin_rf_capture_suppression(uint32_t now_ms) {
+    g_rf_capture_block_until_ms = now_ms + RF_CAPTURE_RESUME_MIN_GUARD_MS;
+    g_rf_capture_sql_quiet_since_ms = 0;
+    g_rf_capture_wait_sql_clear = true;
+    set_rf_capture_adc_muted(true);
+}
+
+void clear_rf_capture_suppression() {
+    g_rf_capture_block_until_ms = 0;
+    g_rf_capture_sql_quiet_since_ms = 0;
+    g_rf_capture_wait_sql_clear = false;
+    set_rf_capture_adc_muted(false);
+}
+
+bool should_suppress_rf_capture(uint32_t now_ms, bool sql_active) {
+    if (!g_rf_capture_wait_sql_clear && g_rf_capture_block_until_ms == 0) {
+        set_rf_capture_adc_muted(false);
+        return false;
+    }
+
+    if (sql_active) {
+        g_rf_capture_sql_quiet_since_ms = 0;
+        return true;
+    }
+
+    if (g_rf_capture_sql_quiet_since_ms == 0) {
+        g_rf_capture_sql_quiet_since_ms = now_ms;
+    }
+
+    const bool min_guard_done = time_reached(now_ms, g_rf_capture_block_until_ms);
+    const bool sql_quiet_done = (now_ms - g_rf_capture_sql_quiet_since_ms) >= RF_CAPTURE_SQL_QUIET_MS;
+    if (!min_guard_done || !sql_quiet_done) {
+        return true;
+    }
+
+    clear_rf_capture_suppression();
+    return false;
+}
+
 void stop_voice_bridge() {
     const uint32_t now_ms = millis();
+    const bool was_active = (g_voice_state == VoiceBridgeState::NET_TO_RF_ACTIVE);
     on_voice_bridge_stopped(now_ms);
-    if (g_voice_state == VoiceBridgeState::NET_TO_RF_ACTIVE) {
+    if (was_active) {
         sa818_stop_tx();
         app_logic_on_ptt_released();
         edit_controller_set_network_bridge_active(false);
+        begin_rf_capture_suppression(now_ms);
     }
     edit_controller_set_network_bridge_source(nullptr, 0);
     g_voice_state = VoiceBridgeState::IDLE;
@@ -1248,6 +1308,7 @@ bool mark_voice_packet_received() {
         return false;
     }
 
+    begin_rf_capture_suppression(now_ms);
     app_logic_on_ptt_prepare();
     sa818_start_tx();
     app_logic_on_ptt_started();
@@ -1296,6 +1357,7 @@ void close_udp_session() {
     g_rf_guard_last_rx_packet_at_ms = 0;
     g_rf_guard_wait_next_burst = false;
     g_rf_guard_budget_recovered = false;
+    clear_rf_capture_suppression();
 }
 
 void refresh_runtime_config_from_nvs() {
@@ -2055,7 +2117,13 @@ void maybe_capture_and_send_rf_audio() {
         return;
     }
     // SQL active means RF module is currently receiving a valid signal.
-    if (!sa818_is_rx()) {
+    const bool sql_active = sa818_is_rx();
+    const uint32_t now = millis();
+    if (should_suppress_rf_capture(now, sql_active)) {
+        reset_tx_audio_merge();
+        return;
+    }
+    if (!sql_active) {
         reset_tx_audio_merge();
         return;
     }
@@ -2065,7 +2133,6 @@ void maybe_capture_and_send_rf_audio() {
     const bool read_ok = i2s_read(g_rt_pcm_work, stereo_bytes, &bytes_read);
     if (!read_ok || bytes_read < stereo_bytes) {
         ++g_audio_tx_stats.i2s_read_fail;
-        const uint32_t now = millis();
         if ((now - g_last_i2s_read_fail_log_at_ms) >= AUDIO_ERROR_LOG_INTERVAL_MS) {
             g_last_i2s_read_fail_log_at_ms = now;
             Serial.printf("[NET][AUDIO][TX] i2s read failed: ok=%d bytes=%u need=%u\n",

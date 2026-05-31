@@ -148,6 +148,7 @@ enum class PrecheckResult : uint8_t {
 enum class ConfirmBindResult : uint8_t {
     RETRY = 0,
     WAITING,
+    BOUND_WAIT_CONFIG,
     READY,
 };
 
@@ -218,6 +219,7 @@ OpusDecoder *g_opus_decoder = nullptr;
 
 char g_dynamic_code[16] = {0};
 uint32_t g_dynamic_code_issued_at_ms = 0;
+bool g_bind_accepted = false;
 
 VoiceBridgeState g_voice_state = VoiceBridgeState::IDLE;
 uint32_t g_last_voice_packet_at_ms = 0;
@@ -981,6 +983,9 @@ const char *state_name(LinkState state) {
 void enter_state(LinkState state, uint32_t delay_ms = 0) {
     g_state = state;
     g_next_action_at_ms = millis() + delay_ms;
+    if (state == LinkState::REQUEST_CODE) {
+        g_bind_accepted = false;
+    }
     refresh_server_status_widgets();
     Serial.printf("[NET] state -> %s (delay=%lu)\n", state_name(state), static_cast<unsigned long>(delay_ms));
 }
@@ -1420,6 +1425,7 @@ bool request_dynamic_code() {
     JsonDocument request;
     JsonDocument response;
 
+    g_bind_accepted = false;
     request["mac"] = get_device_mac();
     if (!post_json("/device/request-code", request, response)) {
         Serial.printf("[NET][BIND] request-code http failed for mac=%s\n",
@@ -1478,7 +1484,7 @@ ConfirmBindResult perform_confirm_bind() {
         return ConfirmBindResult::RETRY;
     }
     if (strcmp(status, "waiting") == 0) {
-        show_bind_popup(g_dynamic_code, (message[0] != '\0') ? message : "Waiting for bind");
+        show_bind_popup(g_dynamic_code, "Waiting for web bind");
         return ConfirmBindResult::WAITING;
     }
 
@@ -1486,16 +1492,20 @@ ConfirmBindResult perform_confirm_bind() {
         return ConfirmBindResult::RETRY;
     }
 
+    g_bind_accepted = true;
+    show_bind_popup("", "Bind accepted, syncing config...");
+
     const char *username = response["data"]["username"] | "";
     const char *device_password = response["data"]["device_password"] | "";
     const uint8_t ssid = response["data"]["ssid"] | 0;
     const uint32_t dmr_id = response["data"]["dmr_id"] | 0;
 
     if (username[0] == '\0' || device_password[0] == '\0') {
-        return ConfirmBindResult::RETRY;
+        return ConfirmBindResult::BOUND_WAIT_CONFIG;
     }
     if (ssid != 0 && !device_config::is_valid_device_node_ssid(ssid)) {
-        return ConfirmBindResult::RETRY;
+        show_bind_popup("", "Bind config invalid, retrying...");
+        return ConfirmBindResult::BOUND_WAIT_CONFIG;
     }
 
     copy_cstr(g_config.server.account, username);
@@ -1507,6 +1517,7 @@ ConfirmBindResult perform_confirm_bind() {
     hide_bind_popup();
     g_dynamic_code[0] = '\0';
     g_dynamic_code_issued_at_ms = 0;
+    g_bind_accepted = false;
     return ConfirmBindResult::READY;
 }
 
@@ -2319,7 +2330,11 @@ void decode_and_play_payload(const uint8_t *payload, size_t payload_len) {
 void on_auth_failed() {
     stop_voice_bridge();
     close_udp_session();
-    enter_state(LinkState::REQUEST_CODE, 200);
+    if (has_auth_credentials()) {
+        enter_state(LinkState::PRECHECK, HTTP_RETRY_MS);
+    } else {
+        enter_state(LinkState::REQUEST_CODE, 200);
+    }
 }
 
 void on_authenticated(const DraPacketHeader &header) {
@@ -2506,7 +2521,8 @@ void update_state_machine() {
             break;
 
         case LinkState::CONFIRM_BIND:
-            if (g_dynamic_code_issued_at_ms != 0 &&
+            if (!g_bind_accepted &&
+                g_dynamic_code_issued_at_ms != 0 &&
                 (now - g_dynamic_code_issued_at_ms) >= DYNAMIC_CODE_REFRESH_MS) {
                 enter_state(LinkState::REQUEST_CODE, 0);
                 break;
@@ -2518,6 +2534,9 @@ void update_state_machine() {
                     break;
                 case ConfirmBindResult::WAITING:
                     enter_state(LinkState::CONFIRM_BIND, BIND_POLL_MS);
+                    break;
+                case ConfirmBindResult::BOUND_WAIT_CONFIG:
+                    enter_state(LinkState::CONFIRM_BIND, HTTP_RETRY_MS);
                     break;
                 case ConfirmBindResult::RETRY:
                 default:

@@ -15,6 +15,7 @@ static uint8_t current_volume = 5;
 static bool is_wide_band = false;
 static bool is_tx = false;
 static bool is_enabled = false;
+static bool module_present = false;
 
 // 频率配置
 static uint32_t tx_freq = 433500;
@@ -229,7 +230,21 @@ static bool normalize_subaudio_value(const char *input, char *buffer, size_t buf
 }
 
 // 发送 AT 命令
-static bool send_at_command(const char *cmd, char *response, size_t resp_len, uint32_t timeout_ms = 100) {
+static bool send_at_command(const char *cmd,
+                            char *response,
+                            size_t resp_len,
+                            uint32_t timeout_ms = 100,
+                            bool allow_without_present = false) {
+    if (!module_present && !allow_without_present) {
+        if (response && resp_len > 0) {
+            response[0] = '\0';
+        }
+        if (SA818_DEBUG_LOG) {
+            Serial.printf("[SA818][AT>>] skipped, module not present: %s\n", cmd ? cmd : "<null>");
+        }
+        return false;
+    }
+
     uart_flush_rx();
 
     char tx_packet[128] = {0};
@@ -296,6 +311,7 @@ static bool send_at_command(const char *cmd, char *response, size_t resp_len, ui
 
 bool sa818_init(SA818Type type) {
     module_type = type;
+    module_present = false;
 
     // 配置 GPIO
     // SA818_EN: 外部下拉, 上拉为启动
@@ -326,6 +342,7 @@ bool sa818_init(SA818Type type) {
 
 void sa818_deinit(void) {
     uart_driver_deinit();
+    module_present = false;
 
     pinMode(SA818_EN, INPUT);
     pinMode(SA818_SQL, INPUT);
@@ -666,25 +683,27 @@ bool sa818_get_version(char *buffer, size_t len) {
 
 bool sa818_is_connected(void) {
     char response[32] = {0};
+    bool connected = false;
 
     // SA818 / DRA818 系列通常使用 AT+DMOCONNECT 进行握手。
-    if (send_at_command("AT+DMOCONNECT", response, sizeof(response), 500)) {
-        return true;
-    }
-    if (strstr(response, "+DMOCONNECT") != nullptr) {
-        return true;
+    if (send_at_command("AT+DMOCONNECT", response, sizeof(response), 500, true)) {
+        connected = true;
+    } else if (strstr(response, "+DMOCONNECT") != nullptr) {
+        connected = true;
     }
 
     // 兼容部分固件：普通 "AT" 可能返回 +DMOERROR，但这也能证明串口链路是通的。
-    response[0] = '\0';
-    if (send_at_command("AT", response, sizeof(response), 500)) {
-        return true;
-    }
-    if (strstr(response, "+DMOERROR") != nullptr) {
-        return true;
+    if (!connected) {
+        response[0] = '\0';
+        if (send_at_command("AT", response, sizeof(response), 500, true)) {
+            connected = true;
+        } else if (strstr(response, "+DMOERROR") != nullptr) {
+            connected = true;
+        }
     }
 
-    return false;
+    module_present = connected;
+    return module_present;
 }
 
 void sa818_set_rx_callback(SA818RxCallback callback) {

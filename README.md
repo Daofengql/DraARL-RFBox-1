@@ -11,6 +11,15 @@
 
 当前固件版本定义在 [`src/config.h`](src/config.h)：`FIRMWARE_VERSION = 0.0.2`，`DEVICE_MODEL = 1`。
 
+## 授权协议
+
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)。
+
+- 允许个人学习、研究、实验和非商业二次开发。
+- 禁止未经授权的商业使用、商用收费、商业集成或商业分发。
+- 二次开发、修改版或再分发版本必须保留 `LICENSE` 中的 `Required Notice:` 行，并明确标注原仓库地址：`https://github.com/Daofengql/DraARL-RFBox-1`。
+- 由于包含非商业限制，本项目更准确地说是 source-available / non-commercial source license，不是 OSI 定义下的开放源代码许可。
+
 ## 当前能力
 
 - 320x240 LVGL 图形界面，包含启动页、主页面、设置页、RF 高级页和信息页。

@@ -162,6 +162,7 @@ uint32_t last_info_refresh_ms = 0;
 bool settings_ble_widgets_initialized = false;
 bool settings_ble_enabled_snapshot = false;
 char settings_ble_text_snapshot[33] = {0};
+bool radio_module_ready = false;
 
 void apply_main_screen_overrides();
 void refresh_header_update_indicators();
@@ -567,7 +568,7 @@ void build_subaudio_string(const SubAudioSetting &setting, char *buffer, size_t 
 }
 
 bool apply_all_radio_config_to_sa818() {
-    if (!sa818_is_enabled()) {
+    if (!radio_module_ready || !sa818_is_enabled()) {
         return false;
     }
 
@@ -934,7 +935,7 @@ void save_and_apply_radio_config() {
         net_audio_link_schedule_radio_config_sync();
     }
 
-    if (sa818_is_enabled() && !apply_all_radio_config_to_sa818()) {
+    if (radio_module_ready && sa818_is_enabled() && !apply_all_radio_config_to_sa818()) {
         Serial.println("SA818 apply config failed after save.");
     }
 
@@ -1365,7 +1366,7 @@ void refresh_rf_page_widgets() {
 
 void set_radio_power_high(bool high, bool persist, bool schedule_sync) {
     radio_power_high = high;
-    if (sa818_is_enabled()) {
+    if (radio_module_ready && sa818_is_enabled()) {
         sa818_set_power(radio_power_high ? SA818Power::POWER_HIGH : SA818Power::POWER_LOW);
     }
 
@@ -2058,6 +2059,8 @@ void edit_controller_on_enter_main_screen() {
 }
 
 bool edit_controller_boot_radio_init() {
+    radio_module_ready = false;
+
     if (!sa818_init(SA818Type::SA818_UHF)) {
         Serial.println("SA818 init failed.");
         return false;
@@ -2073,6 +2076,7 @@ bool edit_controller_boot_radio_init() {
         return false;
     }
 
+    radio_module_ready = true;
     sql_rx_active = sa818_is_rx();
 
     const bool cfg_ok = apply_all_radio_config_to_sa818();
@@ -2365,11 +2369,13 @@ bool edit_controller_set_radio_config(const device_config::RadioConfig &config, 
     }
 
     bool ok = true;
-    if (sa818_is_enabled()) {
+    if (radio_module_ready && sa818_is_enabled()) {
         ok = apply_all_radio_config_to_sa818();
         if (!ok) {
             Serial.println("External radio config apply failed.");
         }
+    } else {
+        Serial.println("External radio config saved; SA818 module not present, hardware apply skipped.");
     }
 
     log_radio_config("EXT_APPLY");

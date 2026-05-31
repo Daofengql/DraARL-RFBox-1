@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--project",
-        default="DraARL-ESP32-RF",
+        default="DraARL-RFBox-1",
         help="Project name used in the package file name",
     )
     parser.add_argument(

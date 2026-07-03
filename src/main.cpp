@@ -23,6 +23,17 @@ static lv_color_t *buf2 = nullptr;
 
 static float current_brightness = 1.0f;
 
+static void hold_sa818_safe_at_boot() {
+    pinMode(SA818_EN, OUTPUT);
+    digitalWrite(SA818_EN, LOW);
+
+    pinMode(SA818_PTT, OUTPUT);
+    digitalWrite(SA818_PTT, HIGH);
+
+    pinMode(SA818_PW, OUTPUT);
+    digitalWrite(SA818_PW, LOW);
+}
+
 static void log_boot_identity() {
     Serial.printf("[FW] Boot version=%s built=%s %s\n", FIRMWARE_VERSION, __DATE__, __TIME__);
     Serial.printf("[MEM] heap_free=%u psram_found=%d psram_free=%u psram_total=%u\n",
@@ -116,6 +127,8 @@ static void on_update_button_clicked(lv_event_t *e) {
 }
 
 void setup() {
+    hold_sa818_safe_at_boot();
+
     // Keep backlight off at boot until PWM is ready.
     pinMode(BACKLIGHT_PIN, OUTPUT);
     digitalWrite(BACKLIGHT_PIN, LOW);

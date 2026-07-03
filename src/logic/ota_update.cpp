@@ -32,6 +32,7 @@ enum class HashVerificationMode : uint8_t {
 constexpr size_t OTA_RESPONSE_PREVIEW_MAX = 192;
 constexpr uint32_t OTA_HTTP_GATE_WAIT_MS = 10000;
 constexpr size_t OTA_DOWNLOAD_BUFFER_SIZE = 2048;
+constexpr size_t OTA_API_BASE_CANDIDATE_MAX = 3;
 
 void set_error(const char *msg) {
     if (msg) {
@@ -40,6 +41,23 @@ void set_error(const char *msg) {
     } else {
         error_message[0] = '\0';
     }
+}
+
+bool append_api_base_candidate(const char *base,
+                               const char **candidates,
+                               size_t &candidate_count) {
+    if (!base || base[0] == '\0' || !candidates || candidate_count >= OTA_API_BASE_CANDIDATE_MAX) {
+        return false;
+    }
+
+    for (size_t i = 0; i < candidate_count; ++i) {
+        if (strcmp(candidates[i], base) == 0) {
+            return false;
+        }
+    }
+
+    candidates[candidate_count++] = base;
+    return true;
 }
 
 bool equals_ignore_case(const char *lhs, const char *rhs) {
@@ -254,13 +272,20 @@ bool check_for_update(FirmwareInfo &info) {
     device_config::DeviceConfig config;
     device_config::load(config);
 
-    char url[256];
-    snprintf(url,
-             sizeof(url),
-             "%s/api/public/firmware/latest?dev_model=%d&current_version=%s",
-             config.server.http_api_base_url,
-             DEVICE_MODEL,
-             FIRMWARE_VERSION);
+    const char *api_base_candidates[OTA_API_BASE_CANDIDATE_MAX] = {};
+    size_t api_base_candidate_count = 0;
+    append_api_base_candidate(config.server.http_api_base_url,
+                              api_base_candidates,
+                              api_base_candidate_count);
+    if (device_config::server_default_migration_available() &&
+        device_config::is_default_or_legacy_server_http_api_base(config.server.http_api_base_url)) {
+        append_api_base_candidate(device_config::default_server_http_api_base_url(),
+                                  api_base_candidates,
+                                  api_base_candidate_count);
+        append_api_base_candidate(device_config::legacy_server_http_api_base_url(),
+                                  api_base_candidates,
+                                  api_base_candidate_count);
+    }
 
     Serial.printf("[OTA] Check context: base=%s model=%d current=%s auto=%d pending=%d wifi_ip=%s rssi=%ld\n",
                   config.server.http_api_base_url[0] != '\0' ? config.server.http_api_base_url : "<empty>",
@@ -270,7 +295,6 @@ bool check_for_update(FirmwareInfo &info) {
                   config.ota.has_pending_update ? 1 : 0,
                   WiFi.localIP().toString().c_str(),
                   static_cast<long>(WiFi.RSSI()));
-    Serial.printf("[OTA] GET %s\n", url);
 
     http_request_gate::ScopedLock http_lock("OTA_CHECK", OTA_HTTP_GATE_WAIT_MS);
     if (!http_lock.locked()) {
@@ -280,51 +304,103 @@ bool check_for_update(FirmwareInfo &info) {
         return false;
     }
 
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient http;
-    http.begin(client, url);
-    http.setTimeout(10000);
-
-    int http_code = http.GET();
-    Serial.printf("[OTA] HTTP GET finished with code=%d\n", http_code);
-
-    if (http_code == 404) {
-        Serial.println("[OTA] Server returned 404, no firmware published for this model.");
-        info.has_update = false;
-        current_state = OTAState::IDLE;
-        http.end();
-        return true;
-    }
-
-    if (http_code != 200) {
-        Serial.printf("[OTA] HTTP GET failed: %s\n", http.errorToString(http_code).c_str());
-        snprintf(error_message, sizeof(error_message), "HTTP error: %d", http_code);
+    if (api_base_candidate_count == 0) {
+        set_error("Empty OTA API base");
         current_state = OTAState::FAILED;
-        http.end();
         return false;
     }
 
-    http_response_buffer::Buffer response = {};
-    if (!http_response_buffer::read_all(http, response, "OTA_CHECK")) {
-        set_error("Read response failed");
-        current_state = OTAState::FAILED;
+    for (size_t i = 0; i < api_base_candidate_count; ++i) {
+        FirmwareInfo attempt_info = {};
+
+        char url[256];
+        snprintf(url,
+                 sizeof(url),
+                 "%s/api/public/firmware/latest?dev_model=%d&current_version=%s",
+                 api_base_candidates[i],
+                 DEVICE_MODEL,
+                 FIRMWARE_VERSION);
+
+        Serial.printf("[OTA] GET %s%s\n",
+                      url,
+                      (api_base_candidate_count > 1) ? " (candidate)" : "");
+
+        WiFiClientSecure client;
+        client.setInsecure();
+
+        HTTPClient http;
+        http.begin(client, url);
+        http.setTimeout(10000);
+
+        const int http_code = http.GET();
+        Serial.printf("[OTA] HTTP GET finished with code=%d base=%s\n",
+                      http_code,
+                      api_base_candidates[i]);
+
+        if (http_code == 404) {
+            Serial.println("[OTA] Server returned 404 for firmware metadata.");
+            http.end();
+            if ((i + 1U) < api_base_candidate_count) {
+                Serial.println("[OTA] Trying next OTA API base after 404.");
+                continue;
+            }
+            info.has_update = false;
+            current_state = OTAState::IDLE;
+            Serial.println("[OTA] No firmware published for this model.");
+            return true;
+        }
+
+        if (http_code != 200) {
+            Serial.printf("[OTA] HTTP GET failed: %s\n", http.errorToString(http_code).c_str());
+            snprintf(error_message, sizeof(error_message), "HTTP error: %d", http_code);
+            http.end();
+            if ((i + 1U) < api_base_candidate_count) {
+                Serial.println("[OTA] Trying next OTA API base after HTTP failure.");
+                continue;
+            }
+            current_state = OTAState::FAILED;
+            return false;
+        }
+
+        http_response_buffer::Buffer response = {};
+        if (!http_response_buffer::read_all(http, response, "OTA_CHECK")) {
+            set_error("Read response failed");
+            http.end();
+            http_response_buffer::release(response);
+            if ((i + 1U) < api_base_candidate_count) {
+                Serial.println("[OTA] Trying next OTA API base after read failure.");
+                continue;
+            }
+            current_state = OTAState::FAILED;
+            return false;
+        }
         http.end();
+        log_response_preview(response.data, response.length);
+
+        const bool result = parse_firmware_response(response.data, response.length, attempt_info);
         http_response_buffer::release(response);
+        Serial.printf("[OTA] Parse result: ok=%d has_update=%d version=%s base=%s\n",
+                      result ? 1 : 0,
+                      attempt_info.has_update ? 1 : 0,
+                      attempt_info.version[0] != '\0' ? attempt_info.version : "<none>",
+                      api_base_candidates[i]);
+        if (result) {
+            info = attempt_info;
+            current_state = OTAState::IDLE;
+            return true;
+        }
+
+        if ((i + 1U) < api_base_candidate_count) {
+            Serial.println("[OTA] Trying next OTA API base after parse failure.");
+            continue;
+        }
+
+        current_state = OTAState::FAILED;
         return false;
     }
-    http.end();
-    log_response_preview(response.data, response.length);
 
-    bool result = parse_firmware_response(response.data, response.length, info);
-    http_response_buffer::release(response);
-    Serial.printf("[OTA] Parse result: ok=%d has_update=%d version=%s\n",
-                  result ? 1 : 0,
-                  info.has_update ? 1 : 0,
-                  info.version[0] != '\0' ? info.version : "<none>");
-    current_state = result ? OTAState::IDLE : OTAState::FAILED;
-    return result;
+    current_state = OTAState::FAILED;
+    return false;
 }
 
 bool start_update(const char *url, const char *expected_hash, const char *expected_hash_algorithm) {

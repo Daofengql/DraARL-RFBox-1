@@ -1,10 +1,24 @@
 #include "i2s_driver.h"
 #include "../config.h"
+#include <driver/gpio.h>
 #include <string.h>
 #include <stdlib.h>
 
 static uint8_t current_volume = 100;
 static bool is_muted = false;
+
+static void apply_i2s_gpio_drive(void) {
+    const gpio_num_t output_pins[] = {
+        static_cast<gpio_num_t>(I2S_MCLK),
+        static_cast<gpio_num_t>(I2S_BCLK),
+        static_cast<gpio_num_t>(I2S_WS),
+        static_cast<gpio_num_t>(I2S_DOUT),
+    };
+
+    for (gpio_num_t pin : output_pins) {
+        gpio_set_drive_capability(pin, GPIO_DRIVE_CAP_2);
+    }
+}
 
 bool i2s_driver_init(void) {
     i2s_config_t i2s_config = {
@@ -18,7 +32,7 @@ bool i2s_driver_init(void) {
         .dma_buf_len = I2S_DMA_BUF_LEN,
         .use_apll = true,
         .tx_desc_auto_clear = true,
-        .fixed_mclk = static_cast<int>(I2S_SAMPLE_RATE * 256U),
+        .fixed_mclk = static_cast<int>(I2S_MCLK_HZ),
     };
 
     i2s_pin_config_t pin_config = {
@@ -39,6 +53,7 @@ bool i2s_driver_init(void) {
         i2s_driver_uninstall(I2S_PORT_NUM);
         return false;
     }
+    apply_i2s_gpio_drive();
 
     ret = i2s_set_clk(I2S_PORT_NUM, I2S_SAMPLE_RATE, 16, I2S_CHANNEL_STEREO);
     if (ret != ESP_OK) {
@@ -97,6 +112,7 @@ bool i2s_read(void *data, size_t len, size_t *bytes_read) {
 
 void i2s_set_sample_rate(uint32_t rate) {
     i2s_set_clk(I2S_PORT_NUM, rate, 16, I2S_CHANNEL_STEREO);
+    apply_i2s_gpio_drive();
 }
 
 void i2s_set_volume(uint8_t volume) {
@@ -110,4 +126,7 @@ uint8_t i2s_get_volume(void) {
 
 void i2s_set_mute(bool mute) {
     is_muted = mute;
+    if (mute) {
+        i2s_zero_dma_buffer(I2S_PORT_NUM);
+    }
 }

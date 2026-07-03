@@ -111,6 +111,11 @@ bool save_radio(const RadioConfig &config);
 bool save_server(const ServerConfig &config);
 bool save_ota(const OTAConfig &config);
 
+const char *default_server_http_api_base_url();
+const char *legacy_server_http_api_base_url();
+bool server_default_migration_available();
+bool is_default_or_legacy_server_http_api_base(const char *base_url);
+
 bool has_wifi_credentials(const WiFiConfig &config);
 bool is_valid_device_node_ssid(uint8_t ssid);
 uint8_t sanitize_backlight_pwm(uint8_t pwm);

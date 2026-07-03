@@ -80,6 +80,7 @@ constexpr uint32_t RF_GUARD_NEXT_BURST_GAP_MS = 3000;
 constexpr bool AUDIO_STATS_LOG_ENABLED = false;
 constexpr uint32_t AUDIO_STATS_LOG_INTERVAL_MS = 5000;
 constexpr uint32_t AUDIO_ERROR_LOG_INTERVAL_MS = 2000;
+constexpr bool NET_TO_RF_DEBUG_LOG_ENABLED = false;
 
 constexpr uint8_t CONFIG_CMD_QUERY = 0x01;
 constexpr uint8_t CONFIG_CMD_APPLY = 0x02;
@@ -172,6 +173,8 @@ struct AudioRxStats {
     uint32_t merged_parse_fail = 0;
     uint32_t server_voice_short = 0;
     uint32_t rf_guard_drop = 0;
+    uint16_t last_pcm_peak = 0;
+    uint16_t max_pcm_peak = 0;
 };
 
 struct AudioTxStats {
@@ -1270,6 +1273,9 @@ void stop_voice_bridge() {
         app_logic_on_ptt_released();
         edit_controller_set_network_bridge_active(false);
         begin_rf_capture_suppression(now_ms);
+        if (NET_TO_RF_DEBUG_LOG_ENABLED) {
+            Serial.printf("[NET][AUDIO][RX] bridge stop at=%lu\n", static_cast<unsigned long>(now_ms));
+        }
     }
     edit_controller_set_network_bridge_source(nullptr, 0);
     g_voice_state = VoiceBridgeState::IDLE;
@@ -1320,6 +1326,13 @@ bool mark_voice_packet_received() {
     g_voice_state = VoiceBridgeState::NET_TO_RF_ACTIVE;
     edit_controller_set_network_bridge_active(true);
     on_voice_bridge_started(now_ms);
+    if (NET_TO_RF_DEBUG_LOG_ENABLED) {
+        Serial.printf("[NET][AUDIO][RX] bridge start at=%lu gap=%lu sql=%d budget=%.1f\n",
+                      static_cast<unsigned long>(now_ms),
+                      static_cast<unsigned long>(packet_gap_ms),
+                      sa818_is_rx() ? 1 : 0,
+                      static_cast<double>(g_rf_guard_budget_ms));
+    }
     delay(VOICE_BRIDGE_PTT_SETTLE_MS);
     return true;
 }
@@ -2090,11 +2103,13 @@ void maybe_log_audio_stats() {
     const unsigned long loop_stack_hw_bytes =
         static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)) * sizeof(StackType_t);
 
-    Serial.printf("[NET][AUDIO] p5=%lu p6=%lu bytes=%lu ok=%lu dec_fail=%lu i2s_fail=%lu not_ready=%lu parse_fail=%lu short6=%lu rf_drop=%lu tx_ok=%lu tx_bytes=%lu tx_read_fail=%lu tx_enc_fail=%lu tx_udp_fail=%lu rf_trip_single=%lu rf_trip_duty=%lu rf_overload=%d rf_budget_ms=%.1f stack_hw=%lu\n",
+    Serial.printf("[NET][AUDIO] p5=%lu p6=%lu bytes=%lu ok=%lu peak=%u max_peak=%u dec_fail=%lu i2s_fail=%lu not_ready=%lu parse_fail=%lu short6=%lu rf_drop=%lu tx_ok=%lu tx_bytes=%lu tx_read_fail=%lu tx_enc_fail=%lu tx_udp_fail=%lu rf_trip_single=%lu rf_trip_duty=%lu rf_overload=%d rf_budget_ms=%.1f stack_hw=%lu\n",
                   static_cast<unsigned long>(g_audio_rx_stats.packets_type5),
                   static_cast<unsigned long>(g_audio_rx_stats.packets_type6),
                   static_cast<unsigned long>(g_audio_rx_stats.audio_payload_bytes),
                   static_cast<unsigned long>(g_audio_rx_stats.decoded_frames_ok),
+                  static_cast<unsigned int>(g_audio_rx_stats.last_pcm_peak),
+                  static_cast<unsigned int>(g_audio_rx_stats.max_pcm_peak),
                   static_cast<unsigned long>(g_audio_rx_stats.decode_fail),
                   static_cast<unsigned long>(g_audio_rx_stats.i2s_fail),
                   static_cast<unsigned long>(g_audio_rx_stats.audio_not_ready),
@@ -2269,10 +2284,19 @@ bool decode_and_play_frame(const uint8_t *frame, size_t frame_len) {
     }
 
     // In-place mono->stereo expansion on the shared RT PCM workspace.
+    uint16_t peak = 0;
     for (int i = decoded_samples - 1; i >= 0; --i) {
         const int16_t sample = g_rt_pcm_work[i];
+        const int32_t sample_abs = (sample == INT16_MIN) ? 32768 : std::abs(static_cast<int>(sample));
+        if (sample_abs > peak) {
+            peak = static_cast<uint16_t>(sample_abs);
+        }
         g_rt_pcm_work[i * 2] = sample;
         g_rt_pcm_work[i * 2 + 1] = sample;
+    }
+    g_audio_rx_stats.last_pcm_peak = peak;
+    if (peak > g_audio_rx_stats.max_pcm_peak) {
+        g_audio_rx_stats.max_pcm_peak = peak;
     }
 
     size_t written = 0;
@@ -2383,6 +2407,12 @@ void process_udp_packet(const uint8_t *packet, size_t packet_len) {
     if (header.type == TYPE_OPUS_16K) {
         ++g_audio_rx_stats.packets_type5;
         g_audio_rx_stats.audio_payload_bytes += static_cast<uint32_t>(data_len);
+        if (NET_TO_RF_DEBUG_LOG_ENABLED &&
+            (g_audio_rx_stats.packets_type5 <= 5 || (g_audio_rx_stats.packets_type5 % 50U) == 0U)) {
+            Serial.printf("[NET][AUDIO][RXPKT] type=5 data_len=%u state=%s\n",
+                          static_cast<unsigned int>(data_len),
+                          state_name(g_state));
+        }
         edit_controller_set_network_bridge_source(header.call_sign, header.ssid);
         decode_and_play_payload(data, data_len);
         return;
@@ -2391,6 +2421,13 @@ void process_udp_packet(const uint8_t *packet, size_t packet_len) {
     if (header.type == TYPE_SERVER_VOICE) {
         ++g_audio_rx_stats.packets_type6;
         edit_controller_set_network_bridge_source(header.call_sign, header.ssid);
+        if (NET_TO_RF_DEBUG_LOG_ENABLED &&
+            (g_audio_rx_stats.packets_type6 <= 5 || (g_audio_rx_stats.packets_type6 % 50U) == 0U)) {
+            Serial.printf("[NET][AUDIO][RXPKT] type=6 data_len=%u payload_len=%u state=%s\n",
+                          static_cast<unsigned int>(data_len),
+                          static_cast<unsigned int>((data_len > 68) ? (data_len - 68) : 0),
+                          state_name(g_state));
+        }
         if (data_len > 68) {
             g_audio_rx_stats.audio_payload_bytes += static_cast<uint32_t>(data_len - 68);
             decode_and_play_payload(data + 68, data_len - 68);
@@ -2618,6 +2655,7 @@ bool init_audio_chain() {
             es8388_enable_dac(true);
             es8388_set_dac_mute(false);
             es8388_set_adc_mute(false);
+            g_rf_capture_adc_muted = false;
         }
     }
 

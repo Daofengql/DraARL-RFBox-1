@@ -2,6 +2,7 @@
 #include "config.h"
 #include "ec11_driver.h"
 #include <Arduino.h>
+#include <driver/gpio.h>
 
 // 编码器输入设备
 lv_indev_t *encoder_indev = nullptr;
@@ -10,6 +11,20 @@ lv_group_t *encoder_group = nullptr;
 // 编码器状态
 static int32_t enc_diff = 0;
 static lv_indev_state_t enc_state = LV_INDEV_STATE_RELEASED;
+
+static void reduce_tft_gpio_drive(void) {
+  const gpio_num_t pins[] = {
+    static_cast<gpio_num_t>(TFT_SCLK),
+    static_cast<gpio_num_t>(TFT_MOSI),
+    static_cast<gpio_num_t>(TFT_DC),
+    static_cast<gpio_num_t>(TFT_CS),
+    static_cast<gpio_num_t>(TFT_RST),
+  };
+
+  for (gpio_num_t pin : pins) {
+    gpio_set_drive_capability(pin, GPIO_DRIVE_CAP_0);
+  }
+}
 
 // 定义LGFX类，用于显示面板初始化
 class LGFX : public lgfx::LGFX_Device
@@ -24,8 +39,8 @@ public:
     // SPI总线设置
     cfg.spi_host = SPI2_HOST;    
     cfg.spi_mode = 0;            
-    cfg.freq_write = 80000000;   
-    cfg.freq_read = 80000000;    
+    cfg.freq_write = 12000000;
+    cfg.freq_read = 12000000;
     cfg.spi_3wire = true;        
     cfg.use_lock = true;       
     cfg.dma_channel = SPI_DMA_CH_AUTO; 
@@ -80,6 +95,7 @@ LGFX tft;
 
 void initDisplay() {
   tft.init();       
+  reduce_tft_gpio_drive();
   tft.initDMA();    
   tft.startWrite(); 
   // PVGAMCTRL (Positive Voltage Gamma Control)

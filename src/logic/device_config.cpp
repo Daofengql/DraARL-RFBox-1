@@ -7,9 +7,14 @@
 namespace device_config {
 namespace {
 constexpr char CONFIG_NS[] = "device_cfg";
+constexpr char LEGACY_SERVER_UDP_HOST[] = "ptt.4l2.cn";
+constexpr uint16_t LEGACY_SERVER_UDP_PORT = 60050;
+constexpr char LEGACY_SERVER_HTTP_API_BASE_URL[] = "https://ptt.4l2.cn";
 constexpr char DEFAULT_SERVER_UDP_HOST[] = "ptt.4l2.cn";
 constexpr uint16_t DEFAULT_SERVER_UDP_PORT = 60050;
 constexpr char DEFAULT_SERVER_HTTP_API_BASE_URL[] = "https://ptt.4l2.cn";
+constexpr uint16_t SERVER_DEFAULT_REVISION = 1;
+constexpr char SERVER_DEFAULT_REVISION_KEY[] = "svr_def_rev";
 constexpr char BACKLIGHT_KEY[] = "ui_bl";
 constexpr char AUTO_START_KEY[] = "ui_ast";
 
@@ -181,6 +186,70 @@ void load_server_config(Preferences &prefs, ServerConfig &config) {
     load_optional_string(prefs, "svr_pwd", config.device_auth_password, sizeof(config.device_auth_password));
     sanitize_server_config(config);
 }
+
+bool server_defaults_changed() {
+    return strcmp(DEFAULT_SERVER_UDP_HOST, LEGACY_SERVER_UDP_HOST) != 0 ||
+           DEFAULT_SERVER_UDP_PORT != LEGACY_SERVER_UDP_PORT ||
+           strcmp(DEFAULT_SERVER_HTTP_API_BASE_URL, LEGACY_SERVER_HTTP_API_BASE_URL) != 0;
+}
+
+bool persist_server_config(Preferences &prefs, const ServerConfig &config) {
+    prefs.putString("svr_call", config.callsign);
+    prefs.putUChar("svr_ssid", config.node_ssid);
+    prefs.putULong("svr_dmr", config.dmr_id);
+    prefs.putString("svr_udp_h", config.udp_host);
+    prefs.putUShort("svr_udp_p", config.udp_port);
+    prefs.putString("svr_http", config.http_api_base_url);
+    prefs.putString("svr_acc", config.account);
+    prefs.putString("svr_pwd", config.device_auth_password);
+    prefs.putUShort(SERVER_DEFAULT_REVISION_KEY, SERVER_DEFAULT_REVISION);
+    return true;
+}
+
+bool migrate_legacy_server_defaults(ServerConfig &config) {
+    if (!server_defaults_changed()) {
+        return false;
+    }
+
+    Preferences prefs;
+    if (!prefs.begin(CONFIG_NS, false)) {
+        return false;
+    }
+
+    const uint16_t stored_revision = prefs.getUShort(SERVER_DEFAULT_REVISION_KEY, 0);
+    if (stored_revision >= SERVER_DEFAULT_REVISION) {
+        prefs.end();
+        return false;
+    }
+
+    bool changed = false;
+
+    if (strcmp(config.udp_host, LEGACY_SERVER_UDP_HOST) == 0) {
+        copy_cstr(config.udp_host, DEFAULT_SERVER_UDP_HOST);
+        changed = true;
+    }
+
+    if (config.udp_port == LEGACY_SERVER_UDP_PORT) {
+        config.udp_port = DEFAULT_SERVER_UDP_PORT;
+        changed = true;
+    }
+
+    if (strcmp(config.http_api_base_url, LEGACY_SERVER_HTTP_API_BASE_URL) == 0) {
+        copy_cstr(config.http_api_base_url, DEFAULT_SERVER_HTTP_API_BASE_URL);
+        changed = true;
+    }
+
+    if (!changed) {
+        prefs.putUShort(SERVER_DEFAULT_REVISION_KEY, SERVER_DEFAULT_REVISION);
+        prefs.end();
+        return false;
+    }
+
+    sanitize_server_config(config);
+    const bool ok = persist_server_config(prefs, config);
+    prefs.end();
+    return ok;
+}
 } // namespace
 
 void set_defaults(DeviceConfig &config) {
@@ -243,7 +312,28 @@ bool load(DeviceConfig &config) {
     load_server_config(prefs, config.server);
     load_ota_config(prefs, config.ota);
     prefs.end();
+    migrate_legacy_server_defaults(config.server);
     return true;
+}
+
+const char *default_server_http_api_base_url() {
+    return DEFAULT_SERVER_HTTP_API_BASE_URL;
+}
+
+const char *legacy_server_http_api_base_url() {
+    return LEGACY_SERVER_HTTP_API_BASE_URL;
+}
+
+bool server_default_migration_available() {
+    return server_defaults_changed();
+}
+
+bool is_default_or_legacy_server_http_api_base(const char *base_url) {
+    if (!base_url) {
+        return false;
+    }
+    return strcmp(base_url, DEFAULT_SERVER_HTTP_API_BASE_URL) == 0 ||
+           strcmp(base_url, LEGACY_SERVER_HTTP_API_BASE_URL) == 0;
 }
 
 bool save(const DeviceConfig &config) {

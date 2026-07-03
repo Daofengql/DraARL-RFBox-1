@@ -1,4 +1,5 @@
 #include "es8388_driver.h"
+#include "i2s_driver.h"
 #include "i2c_driver.h"
 
 namespace {
@@ -52,8 +53,10 @@ constexpr uint8_t ES8388_I2S_FORMAT_MASK = 0x00;
 constexpr uint8_t ES8388_LEFT_FORMAT_MASK = 0x01;
 constexpr uint8_t ES8388_RIGHT_FORMAT_MASK = 0x02;
 constexpr uint8_t ES8388_DSP_FORMAT_MASK = 0x03;
-constexpr uint8_t ES8388_MCLK_DIV_256 = 0x02;
+constexpr uint8_t ES8388_MCLK_DIV_1024 = 0x07;
 constexpr uint8_t ES8388_ANALOG_0DB = 0x1E;
+
+static_assert(I2S_MCLK_MULTIPLIER == 1024U, "ES8388 MCLK/LRCK register must match I2S_MCLK_MULTIPLIER.");
 
 bool write_reg(uint8_t reg, uint8_t value) {
     const bool ok = i2c_write_byte(active_es8388_addr, reg, value);
@@ -233,8 +236,8 @@ void es8388_set_format(ES8388Format format) {
 
 void es8388_set_sample_rate(ES8388SampleRate rate) {
     (void)rate;
-    write_reg(REG_ADC_CONTROL5, ES8388_MCLK_DIV_256);
-    write_reg(REG_DAC_CONTROL2, ES8388_MCLK_DIV_256);
+    write_reg(REG_ADC_CONTROL5, ES8388_MCLK_DIV_1024);
+    write_reg(REG_DAC_CONTROL2, ES8388_MCLK_DIV_1024);
     write_reg(REG_DAC_CONTROL21, 0x80);
 }
 

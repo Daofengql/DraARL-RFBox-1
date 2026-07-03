@@ -9,7 +9,7 @@
 3. 网络语音链路：DraARL UDP 鉴权、心跳、Opus 16 kHz 语音收发、网络到 RF 桥接。
 4. 设备运维：NVS 参数持久化、服务器配置同步、时间同步、OTA 检查与升级。
 
-当前固件版本定义在 [`src/config.h`](src/config.h)：`FIRMWARE_VERSION = 0.0.2`，`DEVICE_MODEL = 1`。
+当前固件版本定义在 [`src/config.h`](src/config.h)：`FIRMWARE_VERSION = 0.0.3`，`DEVICE_MODEL = 1`。
 
 ## 授权协议
 
@@ -394,7 +394,7 @@ pio device monitor -b 115200
 ### 打包固件
 
 ```bash
-python tools/package_firmware.py --env esp32s3-n16r8 --version 0.0.2
+python tools/package_firmware.py --env esp32s3-n16r8 --version 0.0.3
 ```
 
 打包脚本会收集 bootloader、分区表、固件和可用的 `boot_app0.bin`，生成 `flash_manifest.json`、`flash_args.txt`、`SHA256SUMS.txt` 和 zip 包。

@@ -22,7 +22,7 @@
 namespace {
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
 constexpr uint32_t WIFI_RETRY_DELAY_MS = 3000;
-constexpr uint8_t WIFI_BOOT_FAILURE_LIMIT = 3;
+constexpr uint8_t WIFI_BOOT_FAILURE_LIMIT = 6;
 constexpr uint32_t BLE_IDLE_TIMEOUT_MS = 10 * 60 * 1000UL;
 constexpr uint8_t BLE_AUTH_CODE_LEN = 6;
 constexpr size_t BLE_RPC_CHUNK_PAYLOAD = 19;
@@ -424,6 +424,19 @@ void begin_wifi_connect_attempt(bool reset_failures) {
         g_wifi_retry_suspended = false;
     } else if (g_wifi_retry_suspended) {
         // BLE provisioning fallback is active, suppress background Wi-Fi churn.
+        return;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        g_wifi_state = WiFiState::CONNECTED;
+        g_wifi_attempt_active = false;
+        g_wifi_next_retry_at_ms = 0;
+        g_wifi_retry_suspended = false;
+        g_wifi_connected_once = true;
+        g_wifi_boot_popup_allowed = false;
+        g_wifi_boot_failures = 0;
+        g_wifi_rssi = WiFi.RSSI();
+        notify_status();
         return;
     }
 
@@ -997,6 +1010,7 @@ void disable_ble() {
 void enable_ble(const char *reason, bool show_popup) {
     generate_auth_code();
     init_ble_stack();
+    WiFi.setSleep(true);
     start_ble_advertising();
 
     g_ble_enabled = true;
@@ -1016,7 +1030,13 @@ void enable_ble(const char *reason, bool show_popup) {
 }
 
 void maybe_start_ble_for_boot_failure(const char *reason) {
-    suspend_wifi_retry_for_ble_provisioning();
+    if (device_config::has_wifi_credentials(g_config.wifi)) {
+        g_wifi_attempt_active = false;
+        g_wifi_retry_suspended = false;
+        schedule_wifi_retry(WIFI_RETRY_DELAY_MS);
+    } else {
+        suspend_wifi_retry_for_ble_provisioning();
+    }
 
     if (g_ble_enabled) {
         show_ble_popup(reason);
@@ -1090,7 +1110,7 @@ void connectivity_manager_init() {
     WiFi.mode(WIFI_STA);
     WiFi.persistent(false);
     WiFi.setAutoReconnect(false);
-    // ESP32-S3 requires Wi-Fi modem sleep to stay enabled while BLE is active.
+    // ESP32-S3 requires Wi-Fi modem sleep while the BLE controller is enabled.
     WiFi.setSleep(true);
     WiFi.onEvent(on_wifi_event);
 
@@ -1132,11 +1152,16 @@ void connectivity_manager_update() {
     if (g_evt_wifi_connected) {
         g_evt_wifi_connected = false;
         g_wifi_attempt_active = false;
+        g_wifi_next_retry_at_ms = 0;
+        g_wifi_retry_suspended = false;
         g_wifi_state = WiFiState::CONNECTED;
         g_wifi_connected_once = true;
         g_wifi_boot_popup_allowed = false;
         g_wifi_boot_failures = 0;
         g_wifi_rssi = WiFi.RSSI();
+        if (g_ble_enabled && !g_ble_transport_connected) {
+            disable_ble();
+        }
         notify_status();
         Serial.printf("[WIFI] Connected. IP=%s\n", WiFi.localIP().toString().c_str());
     }
@@ -1220,6 +1245,8 @@ void connectivity_manager_update() {
     if (g_wifi_attempt_active && (now_ms - g_wifi_attempt_started_at_ms) >= WIFI_CONNECT_TIMEOUT_MS) {
         handle_wifi_attempt_failure("timeout");
     } else if (!g_wifi_retry_suspended && !g_wifi_attempt_active &&
+               g_wifi_state != WiFiState::CONNECTED &&
+               WiFi.status() != WL_CONNECTED &&
                g_wifi_next_retry_at_ms != 0 && now_ms >= g_wifi_next_retry_at_ms) {
         begin_wifi_connect_attempt(false);
     }
